@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, DEFAULT_TOOLS } from "./presets";
+import { applyPluginSelection, DEFAULT_SETTINGS, DEFAULT_TOOLS, PLUGIN_PACKS } from "./presets";
 
 describe("default integration registry", () => {
   it("keeps tool names unique and model-safe", () => {
@@ -19,5 +19,18 @@ describe("default integration registry", () => {
 
   it("does not enable destructive API methods by default", () => {
     expect(DEFAULT_TOOLS.filter((tool) => tool.enabled && ["PUT", "PATCH", "DELETE"].includes(tool.method))).toEqual([]);
+  });
+
+  it("keeps plugin definitions aligned with services", () => {
+    expect(PLUGIN_PACKS.map((plugin) => plugin.id).sort()).toEqual(DEFAULT_SETTINGS.services.map((service) => service.id).sort());
+    expect(PLUGIN_PACKS.every((plugin) => DEFAULT_TOOLS.some((tool) => tool.serviceId === plugin.id))).toBe(true);
+  });
+
+  it("enables built-ins without enabling discovered write tools", () => {
+    const discovered = { ...DEFAULT_TOOLS[0], id: "openapi-debris-delete", method: "DELETE" as const, enabled: false };
+    const selected = applyPluginSelection([...DEFAULT_TOOLS, discovered], ["debris"]);
+    expect(selected.filter((tool) => tool.serviceId === "debris" && !tool.id.startsWith("openapi-")).every((tool) => tool.enabled)).toBe(true);
+    expect(selected.find((tool) => tool.id === discovered.id)?.enabled).toBe(false);
+    expect(selected.filter((tool) => tool.serviceId === "starmad").every((tool) => !tool.enabled)).toBe(true);
   });
 });

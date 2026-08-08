@@ -4,6 +4,12 @@ import type { ApiTool, AppSettings, ChatMessage, NativeRequest, ToolRun } from "
 interface AgentMessage { role: "system" | "user" | "assistant" | "tool"; content: string | null; tool_call_id?: string; tool_calls?: ToolCall[] }
 interface ToolCall { id: string; type: "function"; function: { name: string; arguments: string } }
 
+export function shouldRetryWithoutReasoning(status: number, body: unknown): boolean {
+  if (status !== 400) return false;
+  const message = JSON.stringify(body).toLowerCase();
+  return message.includes("reasoning_effort") && message.includes("tool");
+}
+
 function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
@@ -17,7 +23,7 @@ function toolDefinition(tool: ApiTool) {
   return { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } };
 }
 
-function buildToolRequest(tool: ApiTool, args: Record<string, unknown>, settings: AppSettings): NativeRequest {
+export function buildToolRequest(tool: ApiTool, args: Record<string, unknown>, settings: AppSettings): NativeRequest {
   const service = settings.services.find((item) => item.id === tool.serviceId);
   if (!service) throw new Error(`未配置服务: ${tool.serviceId}`);
   let path = tool.path;
@@ -28,30 +34,49 @@ function buildToolRequest(tool: ApiTool, args: Record<string, unknown>, settings
     delete remaining[key];
     return value;
   });
-  let url = joinUrl(service.apiUrl, path);
-  if (tool.method === "GET" && Object.keys(remaining).length) {
-    const query = new URLSearchParams();
-    Object.entries(remaining).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") query.set(key, Array.isArray(value) ? value.join(",") : String(value));
-    });
-    url += `?${query}`;
-  }
   const headers: Record<string, string> = { Accept: "application/json" };
   if (service.authToken) headers.Authorization = `Bearer ${service.authToken}`;
-  if (tool.method !== "GET") headers["Content-Type"] = "application/json";
-  return { url, method: tool.method, headers, body: tool.method === "GET" ? undefined : remaining, allowInvalidCerts: service.allowInvalidCerts, timeoutSeconds: tool.longRunning ? 180 : 30 };
+  for (const key of tool.headerParams || []) {
+    const value = remaining[key];
+    if (value !== undefined && value !== null && value !== "") headers[key] = String(value);
+    delete remaining[key];
+  }
+
+  let url = joinUrl(service.apiUrl, path);
+  const queryKeys = tool.method === "GET" ? Object.keys(remaining) : (tool.queryParams || []);
+  if (queryKeys.length) {
+    const query = new URLSearchParams();
+    queryKeys.forEach((key) => {
+      const value = remaining[key];
+      if (value !== undefined && value !== null && value !== "") query.set(key, Array.isArray(value) ? value.join(",") : String(value));
+      delete remaining[key];
+    });
+    const encoded = query.toString();
+    if (encoded) url += `?${encoded}`;
+  }
+  const includeBody = tool.method !== "GET" && tool.hasRequestBody !== false;
+  if (includeBody) headers["Content-Type"] = "application/json";
+  const body = tool.bodyParam ? remaining[tool.bodyParam] : remaining;
+  return { url, method: tool.method, headers, body: includeBody ? body : undefined, allowInvalidCerts: service.allowInvalidCerts, timeoutSeconds: tool.longRunning ? 180 : 30 };
 }
 
 async function llm(messages: AgentMessage[], settings: AppSettings, tools: ApiTool[]) {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
   if (settings.llm.apiKey) headers.Authorization = `Bearer ${settings.llm.apiKey}`;
-  const response = await request({
+  const requestBody = { model: settings.llm.model, messages, tools: tools.map(toolDefinition), tool_choice: "auto", temperature: settings.llm.temperature };
+  let response = await request({
     url: chatUrl(settings.llm.baseUrl), method: "POST", headers, timeoutSeconds: 180,
-    body: { model: settings.llm.model, messages, tools: tools.map(toolDefinition), tool_choice: "auto", temperature: settings.llm.temperature },
+    body: requestBody,
   });
+  if (shouldRetryWithoutReasoning(response.status, response.body)) {
+    response = await request({
+      url: chatUrl(settings.llm.baseUrl), method: "POST", headers, timeoutSeconds: 180,
+      body: { ...requestBody, reasoning_effort: "none" },
+    });
+  }
   if (response.status < 200 || response.status >= 300) throw new Error(`模型接口 HTTP ${response.status}: ${JSON.stringify(response.body).slice(0, 500)}`);
-  const body = response.body as { choices?: Array<{ message?: AgentMessage }> };
-  const message = body.choices?.[0]?.message;
+  const responseBody = response.body as { choices?: Array<{ message?: AgentMessage }> };
+  const message = responseBody.choices?.[0]?.message;
   if (!message) throw new Error("模型返回中没有 choices[0].message");
   return message;
 }

@@ -1,9 +1,11 @@
 import { DEFAULT_SETTINGS } from "./presets";
-import type { ApiTool, AppSettings, ChatMessage } from "./types";
+import type { ApiTool, AppSettings, ChatMessage, ServiceSettings } from "./types";
 
 const SETTINGS_KEY = "orbit-copilot.settings.v1";
 const CHAT_KEY = "orbit-copilot.chat.v1";
 const TOOLS_KEY = "orbit-copilot.tools.v1";
+const PLUGINS_KEY = "orbit-copilot.plugins.v1";
+const PLUGIN_SETUP_KEY = "orbit-copilot.plugin-setup.v1";
 
 export function loadSettings(): AppSettings {
   try {
@@ -77,4 +79,35 @@ export function loadTools(fallback: ApiTool[]): ApiTool[] {
 
 export function saveTools(tools: ApiTool[]): void {
   localStorage.setItem(TOOLS_KEY, JSON.stringify(tools));
+}
+
+export function hasConfiguredLlm(): boolean {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+    return isLlmConnectionComplete(saved);
+  } catch {
+    return false;
+  }
+}
+
+export function isLlmConnectionComplete(settings: Partial<AppSettings> | null): boolean {
+  return Boolean(settings?.llm?.baseUrl?.trim() && settings?.llm?.model?.trim());
+}
+
+export function hasCompletedPluginSetup(): boolean {
+  return localStorage.getItem(PLUGIN_SETUP_KEY) === "complete";
+}
+
+export function loadInstalledPlugins(): ServiceSettings["id"][] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PLUGINS_KEY) || "null");
+    return Array.isArray(saved) ? saved.filter((id) => id === "debris" || id === "starmad") : ["debris", "starmad"];
+  } catch {
+    return ["debris", "starmad"];
+  }
+}
+
+export function saveInstalledPlugins(ids: ServiceSettings["id"][]): void {
+  localStorage.setItem(PLUGINS_KEY, JSON.stringify(ids));
+  localStorage.setItem(PLUGIN_SETUP_KEY, "complete");
 }

@@ -1,4 +1,26 @@
-import type { ApiTool, AppSettings } from "./types";
+import type { ApiTool, AppSettings, ServiceSettings } from "./types";
+
+export interface PluginPack {
+  id: ServiceSettings["id"];
+  name: string;
+  description: string;
+  features: string[];
+}
+
+export const PLUGIN_PACKS: PluginPack[] = [
+  {
+    id: "debris",
+    name: "空间碎片监测",
+    description: "连接 debris 服务，提供轨道目标检索与发射安全分析。",
+    features: ["区域碎片查询", "发射碰撞风险", "再入、TLE 与 RCS 查询"],
+  },
+  {
+    id: "starmad",
+    name: "STARMAD-COMET",
+    description: "连接协同设计服务，提供工程计算与任务协作能力。",
+    features: ["能力与设计任务", "计算插件与公式", "协同进程"],
+  },
+];
 
 export const DEFAULT_SYSTEM_PROMPT = `你是“轨道智枢”，服务于空间碎片监测与航天器协同设计。
 回答必须基于工具返回的真实数据；需要监测数据、轨道参数、风险、公式或协同状态时优先调用工具。
@@ -92,3 +114,17 @@ export const DEFAULT_TOOLS: ApiTool[] = [
     description: "列出当前账号可访问的 STARMAD 协同进程，需要在设置中填写登录令牌。", inputSchema: object({}),
   },
 ];
+
+export function applyPluginSelection(
+  tools: ApiTool[],
+  selectedPluginIds: ServiceSettings["id"][],
+): ApiTool[] {
+  const selected = new Set(selectedPluginIds);
+  const builtInIds = new Set(DEFAULT_TOOLS.map((tool) => tool.id));
+  return tools.map((tool) => ({
+    ...tool,
+    enabled: selected.has(tool.serviceId)
+      ? (builtInIds.has(tool.id) ? true : tool.enabled)
+      : false,
+  }));
+}

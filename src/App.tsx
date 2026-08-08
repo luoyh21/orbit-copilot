@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  Activity, Bot, Check, ChevronRight, CircleAlert, Database, ExternalLink, Gauge,
+  Activity, Bot, Boxes, Check, ChevronRight, CircleAlert, Database, ExternalLink, Gauge,
   KeyRound, LoaderCircle, Menu, MessageSquarePlus, Orbit, PanelRightClose, PanelRightOpen,
   RadioTower, RefreshCw, Rocket, Send, Settings, ShieldCheck, Sparkles, Wrench, X,
 } from "lucide-react";
 import { runAgent } from "./agent";
-import { discoverOpenApi } from "./openapi";
-import { DEFAULT_TOOLS } from "./presets";
-import { clearChat, hydrateSecrets, loadChat, loadSettings, loadTools, saveChat, saveSettings, saveTools } from "./storage";
+import { discoverOpenApi, mergeDiscoveredTools } from "./openapi";
+import { applyPluginSelection, DEFAULT_TOOLS, PLUGIN_PACKS } from "./presets";
+import { clearChat, hasCompletedPluginSetup, hasConfiguredLlm, hydrateSecrets, loadChat, loadInstalledPlugins, loadSettings, loadTools, saveChat, saveInstalledPlugins, saveSettings, saveTools } from "./storage";
 import { testEndpoint } from "./transport";
 import type { ApiTool, AppSettings, ChatMessage, ServiceSettings, ToolRun } from "./types";
 
@@ -35,19 +35,23 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [llmSetupNeeded, setLlmSetupNeeded] = useState(() => !hasConfiguredLlm());
+  const [settingsOpen, setSettingsOpen] = useState(() => hasCompletedPluginSetup() && !hasConfiguredLlm());
+  const [settingsError, setSettingsError] = useState("");
   const [toolsOpen, setToolsOpen] = useState(true);
   const [mobileNav, setMobileNav] = useState(false);
   const [tools, setTools] = useState<ApiTool[]>(() => loadTools(DEFAULT_TOOLS));
+  const [pluginSetupOpen, setPluginSetupOpen] = useState(() => !hasCompletedPluginSetup());
+  const [selectedPlugins, setSelectedPlugins] = useState<ServiceSettings["id"][]>(() => loadInstalledPlugins());
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const enabledCount = tools.filter((tool) => tool.enabled).length;
 
-  useEffect(() => saveChat(messages), [messages]);
-  useEffect(() => saveTools(tools), [tools]);
+  useEffect(() => { saveChat(messages); }, [messages]);
+  useEffect(() => { saveTools(tools); }, [tools]);
   useEffect(() => { hydrateSecrets(settings).then((value) => { setSettings(value); setDraft(structuredClone(value)); }); }, []);
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), [messages, activeRuns]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, activeRuns]);
 
   const serviceMap = useMemo(() => Object.fromEntries(settings.services.map((item) => [item.id, item])), [settings.services]);
 
@@ -69,10 +73,41 @@ export default function App() {
     clearChat(); setMessages([]); setActiveRuns([]); setMobileNav(false);
   }
 
-  function openSettings() { setDraft(structuredClone(settings)); setSettingsOpen(true); }
+  function openSettings() { setDraft(structuredClone(settings)); setSettingsError(""); setSettingsOpen(true); }
+
+  function openPluginSetup() {
+    setSelectedPlugins(loadInstalledPlugins());
+    setPluginSetupOpen(true);
+  }
+
+  function togglePlugin(id: ServiceSettings["id"]) {
+    setSelectedPlugins((old) => old.includes(id) ? old.filter((item) => item !== id) : [...old, id]);
+  }
+
+  function commitPluginSetup() {
+    setTools((old) => applyPluginSelection(old, selectedPlugins));
+    saveInstalledPlugins(selectedPlugins);
+    setPluginSetupOpen(false);
+    if (llmSetupNeeded) setSettingsOpen(true);
+  }
 
   async function commitSettings() {
-    await saveSettings(draft); setSettings(structuredClone(draft)); setSettingsOpen(false);
+    if (!draft.llm.baseUrl.trim() || !draft.llm.model.trim()) {
+      setSettingsError("请填写 LLM API 地址和模型名称后再保存。");
+      return;
+    }
+    try {
+      const url = new URL(draft.llm.baseUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error("unsupported protocol");
+    } catch {
+      setSettingsError("LLM API 地址格式无效，请填写完整的 http:// 或 https:// 地址。");
+      return;
+    }
+    await saveSettings(draft);
+    setSettings(structuredClone(draft));
+    setLlmSetupNeeded(false);
+    setSettingsError("");
+    setSettingsOpen(false);
   }
 
   async function testService(service: ServiceSettings) {
@@ -89,7 +124,7 @@ export default function App() {
     setStatus((old) => ({ ...old, [key]: { state: "testing" } }));
     try {
       const discovered = await discoverOpenApi(service);
-      setTools((old) => [...old.filter((item) => !item.id.startsWith(`openapi-${service.id}-`)), ...discovered]);
+      setTools((old) => mergeDiscoveredTools(old, discovered, service.id));
       setStatus((old) => ({ ...old, [key]: { state: "ok", latency: discovered.length } }));
     } catch { setStatus((old) => ({ ...old, [key]: { state: "error" } })); }
   }
@@ -112,6 +147,7 @@ export default function App() {
       <div className="history-item"><span>当前对话</span><small>{messages.length ? `${messages.length} 条消息` : "尚未开始"}</small></div>
       <div className="sidebar-spacer" />
       <div className="privacy-note"><ShieldCheck size={16} /><div><strong>本地优先</strong><small>配置与对话仅保存在本机</small></div></div>
+      <button className="settings-link" onClick={openPluginSetup}><Boxes size={17} /> 插件中心 <span className="plugin-count">{selectedPlugins.length}</span><ChevronRight size={15} /></button>
       <button className="settings-link" onClick={openSettings}><Settings size={17} /> 设置 <ChevronRight size={15} /></button>
     </aside>
 
@@ -151,11 +187,16 @@ export default function App() {
       <div className="tool-list">{tools.map((tool) => <label key={tool.id}><span><strong>{tool.title}</strong><small>{tool.serviceId === "debris" ? "碎片监测" : "协同设计"}</small></span><input type="checkbox" checked={tool.enabled} onChange={() => setTools((old) => old.map((item) => item.id === tool.id ? { ...item, enabled: !item.enabled } : item))} /><i /></label>)}</div>
     </aside>}
 
-    {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="settings-modal" role="dialog" aria-modal="true" aria-label="设置"><header><div><span className="eyebrow">LOCAL CONFIGURATION</span><h2>连接设置</h2><p>地址与密钥由当前设备使用，不写入业务服务数据库。</p></div><button onClick={() => setSettingsOpen(false)}><X /></button></header>
-      <div className="settings-content"><section><h3><KeyRound size={17} /> 模型服务</h3><div className="form-grid"><label className="wide">API 地址<input value={draft.llm.baseUrl} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, baseUrl: e.target.value } })} placeholder="http://127.0.0.1:11434/v1" /></label><label>模型名称<input value={draft.llm.model} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, model: e.target.value } })} /></label><label>API Key<input type="password" value={draft.llm.apiKey} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, apiKey: e.target.value } })} placeholder="本地模型可留空" /></label><label>温度 <span>{draft.llm.temperature}</span><input type="range" min="0" max="1" step="0.1" value={draft.llm.temperature} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, temperature: Number(e.target.value) } })} /></label><label>最大工具轮次<input type="number" min="1" max="12" value={draft.llm.maxSteps} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, maxSteps: Number(e.target.value) } })} /></label></div></section>
+    {pluginSetupOpen && <div className="modal-backdrop"><section className="settings-modal plugin-modal" role="dialog" aria-modal="true" aria-label="插件中心"><header><div><span className="eyebrow">OPTIONAL PLUGINS</span><h2>{hasCompletedPluginSetup() ? "插件中心" : "选择要启用的插件"}</h2><p>插件已随安装器离线内置；勾选后启用对应连接与安全工具。</p></div>{hasCompletedPluginSetup() && <button onClick={() => setPluginSetupOpen(false)} aria-label="关闭插件中心"><X /></button>}</header>
+      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = DEFAULT_TOOLS.filter((tool) => tool.serviceId === plugin.id).length; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><em>{toolCount} 个内置工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 动态发现的写入、删除等操作不会自动启用，需在工具注册表中逐项审核。</p></div>
+      <footer><span>{selectedPlugins.length ? `已选择 ${selectedPlugins.length} 个插件` : "仅安装基础程序"}</span>{hasCompletedPluginSetup() && <button className="secondary" onClick={() => setPluginSetupOpen(false)}>取消</button>}<button className="primary" onClick={commitPluginSetup}>{hasCompletedPluginSetup() ? "应用选择" : "完成安装"}</button></footer>
+    </section></div>}
+
+    {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !llmSetupNeeded) setSettingsOpen(false); }}><section className="settings-modal" role="dialog" aria-modal="true" aria-label="设置"><header><div><span className="eyebrow">LOCAL CONFIGURATION</span><h2>{llmSetupNeeded ? "连接你的 LLM API" : "连接设置"}</h2><p>{llmSetupNeeded ? "完成模型连接后即可开始对话和调用工具。" : "地址与密钥由当前设备使用，不写入业务服务数据库。"}</p></div>{!llmSetupNeeded && <button onClick={() => setSettingsOpen(false)}><X /></button>}</header>
+      <div className="settings-content">{llmSetupNeeded && <div className="llm-guide"><Sparkles size={20} /><div><strong>开始前需要完成模型配置</strong><ol><li>填写 OpenAI-compatible API 地址</li><li>填写该服务实际加载的模型名称</li><li>云端服务填写 API Key；本地 Ollama / LM Studio 可留空</li></ol></div></div>}<section><h3><KeyRound size={17} /> 模型服务</h3><div className="form-grid"><label className="wide">API 地址<input autoFocus={llmSetupNeeded} value={draft.llm.baseUrl} onChange={(e) => { setSettingsError(""); setDraft({ ...draft, llm: { ...draft.llm, baseUrl: e.target.value } }); }} placeholder="http://127.0.0.1:11434/v1" /></label><label>模型名称<input value={draft.llm.model} onChange={(e) => { setSettingsError(""); setDraft({ ...draft, llm: { ...draft.llm, model: e.target.value } }); }} /></label><label>API Key<input type="password" value={draft.llm.apiKey} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, apiKey: e.target.value } })} placeholder="本地模型可留空" /></label><label>温度 <span>{draft.llm.temperature}</span><input type="range" min="0" max="1" step="0.1" value={draft.llm.temperature} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, temperature: Number(e.target.value) } })} /></label><label>最大工具轮次<input type="number" min="1" max="12" value={draft.llm.maxSteps} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, maxSteps: Number(e.target.value) } })} /></label></div>{settingsError && <p className="settings-error"><CircleAlert size={14} /> {settingsError}</p>}</section>
         {draft.services.map((service) => <section key={service.id}><h3>{service.id === "debris" ? <RadioTower size={17} /> : <Database size={17} />} {service.name}</h3><div className="form-grid"><label className="wide">API 地址<input value={service.apiUrl} onChange={(e) => servicePatch(service.id, { apiUrl: e.target.value })} /></label><label className="wide">页面入口<input value={service.dashboardUrl} onChange={(e) => servicePatch(service.id, { dashboardUrl: e.target.value })} /></label><label className="wide">Bearer Token（如需要）<input type="password" value={service.authToken} onChange={(e) => servicePatch(service.id, { authToken: e.target.value })} placeholder={service.id === "starmad" ? "登录后获得的令牌" : "通常留空"} /></label><label className="check-label"><input type="checkbox" checked={service.allowInvalidCerts} onChange={(e) => servicePatch(service.id, { allowInvalidCerts: e.target.checked })} /> 接受自签名证书（仅桌面端）</label></div></section>)}
         <section><h3><Bot size={17} /> 助手规则</h3><label className="wide"><textarea rows={6} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} /></label></section>
-      </div><footer><span><CircleAlert size={14} /> Web 版需由服务器允许目标主机；Windows 版可直接访问内网。</span><button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary" onClick={commitSettings}>保存设置</button></footer>
+      </div><footer><span><CircleAlert size={14} /> Web 版需由服务器允许目标主机；Windows 版可直接访问内网。</span>{!llmSetupNeeded && <button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button>}<button className="primary" onClick={commitSettings}>{llmSetupNeeded ? "保存并开始使用" : "保存设置"}</button></footer>
     </section></div>}
   </div>;
 }

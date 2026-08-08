@@ -40,6 +40,11 @@ export interface ApiTool {
   inputSchema: JsonSchema;
   enabled: boolean;
   longRunning?: boolean;
+  queryParams?: string[];
+  headerParams?: string[];
+  hasRequestBody?: boolean;
+  bodyParam?: string;
+  discoveryPolicyVersion?: number;
 }
 
 export interface ChatMessage {

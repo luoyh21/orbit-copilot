@@ -1,6 +1,6 @@
 [package]
 name = "orbit-copilot"
-version = "0.1.0"
+version = "0.3.1"
 description = "Offline-first orbital operations copilot"
 authors = ["STARMAD"]
 edition = "2021"

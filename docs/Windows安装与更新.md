@@ -13,23 +13,26 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.1.1_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.1_x64-setup.exe
+```
+
+若 Windows 安全策略会短暂锁定源码目录中新生成的 Rust 辅助程序，可将 Cargo 构建产物放到本机应用数据目录；构建脚本会自动从该目录查找安装器：
+
+```powershell
+$env:CARGO_TARGET_DIR = Join-Path $env:LOCALAPPDATA "orbit-copilot-build\target"
+PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 ```
 
 ## 首次安装
 
-如需直接安装最新公开版本，在 Windows PowerShell 执行：
+安装和更新都只需要运行发布包中的 `setup.exe`，无需另外运行 PowerShell 或其他程序：
 
-```powershell
-$script = Join-Path $env:TEMP "orbit-copilot-install-smoke-test.ps1"; Invoke-WebRequest "https://raw.githubusercontent.com/luoyh21/orbit-copilot/main/scripts/install-smoke-test.ps1" -OutFile $script; powershell -ExecutionPolicy Bypass -File $script -KeepRunning
-```
-
-它会把安装器保存到当前 Windows 用户的桌面，读取 GitHub Release 的 SHA-256 摘要进行完整性校验，静默安装，再启动应用并确认进程至少存活 10 秒。安装器保留在桌面，便于离线重装；应用保持运行。也可以按以下方式手工安装：
-
-1. 双击 `setup.exe`。
+1. 双击 `setup.exe`；首次运行完成安装，安装过旧版本时直接覆盖更新。
 2. 安装范围为当前用户，默认进入 `%LOCALAPPDATA%`，无需管理员权限。
 3. 首次启动进入“设置”，填写模型地址、模型名和 Key；再检查两套业务服务连接。
 4. 如使用自签名 HTTPS，只对确定可信的服务开启“接受自签名证书”。
+
+首次启动会打开插件中心。勾选需要的内置插件后点击“完成安装”；未勾选的插件不会向模型注册对应工具。之后可随时从左侧“插件中心”重新选择，不需要重复运行安装器。点击服务卡片中的“同步 OpenAPI”即可更新全部接口；只读与明确的查询/预览操作默认启用，写入、删除、账号和 Commit 等高风险操作默认关闭。
 
 模型 Key 与业务 Bearer Token 存储在 Windows Credential Manager，服务名为 `com.starmad.orbitcopilot`；应用普通设置与聊天记录存储在当前用户应用数据中。
 
