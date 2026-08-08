@@ -2,6 +2,8 @@ name: Windows installer
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     tags: ["v*"]
 
@@ -9,8 +11,8 @@ jobs:
   nsis:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -22,8 +24,14 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run desktop:build
-      - uses: actions/upload-artifact@v4
+      - name: Smoke-test silent install and launch
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*setup.exe" -File | Select-Object -First 1
+          if (-not $installer) { throw "Windows installer was not generated." }
+          ./scripts/install-smoke-test.ps1 -InstallerPath $installer.FullName
+      - uses: actions/upload-artifact@v7
         with:
-          name: orbit-copilot-windows-${{ github.ref_name }}
+          name: orbit-copilot-windows-${{ github.run_id }}
           path: src-tauri/target/release/bundle/nsis/*setup.exe
           if-no-files-found: error
