@@ -1,0 +1,12 @@
+version: "3.3"
+
+services:
+  orbit-copilot:
+    build: .
+    container_name: orbit-copilot
+    restart: unless-stopped
+    ports:
+      - "18600:18700"
+    environment:
+      COPILOT_ALLOWED_HOSTS: "111.200.37.148,127.0.0.1,localhost"
+      COPILOT_MAX_RESPONSE_BYTES: "5242880"
