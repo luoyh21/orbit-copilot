@@ -2,15 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  Activity, Bot, Boxes, Check, ChevronRight, CircleAlert, Database, ExternalLink, Gauge,
+  Activity, Bot, Boxes, Check, ChevronLeft, ChevronRight, CircleAlert, Database, ExternalLink, Gauge,
   KeyRound, LoaderCircle, Menu, MessageSquarePlus, Orbit, PanelRightClose, PanelRightOpen,
-  RadioTower, RefreshCw, Rocket, Send, Settings, ShieldCheck, Sparkles, Wrench, X,
+  RadioTower, RefreshCw, Rocket, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from "lucide-react";
 import { runAgent } from "./agent";
 import { discoverOpenApi, mergeDiscoveredTools } from "./openapi";
 import { applyPluginSelection, DEFAULT_TOOLS, PLUGIN_PACKS } from "./presets";
 import { ensureManagedStarmadSession } from "./starmad-auth";
-import { clearChat, hasCompletedPluginSetup, hasConfiguredLlm, hydrateSecrets, loadChat, loadInstalledPlugins, loadSettings, loadTools, saveChat, saveInstalledPlugins, saveSettings, saveTools } from "./storage";
+import { createChatSession, hasCompletedPluginSetup, hasConfiguredLlm, hydrateSecrets, loadChats, loadInstalledPlugins, loadSettings, loadTools, saveChats, saveInstalledPlugins, saveSettings, saveTools } from "./storage";
 import { testEndpoint } from "./transport";
 import type { ApiTool, AppSettings, ChatMessage, ServiceSettings, ToolRun } from "./types";
 
@@ -20,6 +20,7 @@ const starterPrompts = [
   { icon: Orbit, title: "获取轨道根数", text: "查询 NORAD 25544 的最新 TLE，并概括关键轨道参数。" },
   { icon: Database, title: "设计计算能力", text: "STARMAD 当前有哪些计算插件？按专业方向整理。" },
 ];
+const TOOLS_PER_PAGE = 12;
 
 function uid() { return crypto.randomUUID(); }
 
@@ -33,25 +34,32 @@ function statusLabel(state: "idle" | "testing" | "ok" | "error", latency?: numbe
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [draft, setDraft] = useState<AppSettings>(() => loadSettings());
-  const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
+  const [chatState, setChatState] = useState(() => loadChats());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [llmSetupNeeded, setLlmSetupNeeded] = useState(() => !hasConfiguredLlm());
   const [settingsOpen, setSettingsOpen] = useState(() => hasCompletedPluginSetup() && !hasConfiguredLlm());
   const [settingsError, setSettingsError] = useState("");
   const [toolsOpen, setToolsOpen] = useState(true);
+  const [toolPage, setToolPage] = useState(0);
   const [mobileNav, setMobileNav] = useState(false);
   const [tools, setTools] = useState<ApiTool[]>(() => loadTools(DEFAULT_TOOLS));
   const [pluginSetupOpen, setPluginSetupOpen] = useState(() => !hasCompletedPluginSetup());
   const [selectedPlugins, setSelectedPlugins] = useState<ServiceSettings["id"][]>(() => loadInstalledPlugins());
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const chatAreaRef = useRef<HTMLElement>(null);
   const starmadAuthStarted = useRef(false);
+  const activeChat = chatState.sessions.find((session) => session.id === chatState.activeId) || chatState.sessions[0];
+  const messages = activeChat?.messages || [];
+  const activeChatId = activeChat?.id || "";
   const enabledCount = tools.filter((tool) => tool.enabled).length;
+  const toolPageCount = Math.max(1, Math.ceil(tools.length / TOOLS_PER_PAGE));
+  const visibleTools = tools.slice(toolPage * TOOLS_PER_PAGE, (toolPage + 1) * TOOLS_PER_PAGE);
 
-  useEffect(() => { saveChat(messages); }, [messages]);
+  useEffect(() => { saveChats(chatState); }, [chatState]);
   useEffect(() => { saveTools(tools); }, [tools]);
+  useEffect(() => { setToolPage((page) => Math.min(page, toolPageCount - 1)); }, [toolPageCount]);
   useEffect(() => {
     if (starmadAuthStarted.current) return;
     starmadAuthStarted.current = true;
@@ -75,26 +83,68 @@ export default function App() {
       setDraft(structuredClone(next));
     });
   }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, activeRuns]);
+  useEffect(() => {
+    const area = chatAreaRef.current;
+    if (area) area.scrollTo({ top: area.scrollHeight, behavior: "smooth" });
+  }, [messages, activeRuns]);
 
   const serviceMap = useMemo(() => Object.fromEntries(settings.services.map((item) => [item.id, item])), [settings.services]);
+
+  function updateChatMessages(chatId: string, update: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) {
+    setChatState((old) => ({
+      ...old,
+      sessions: old.sessions.map((session) => {
+        if (session.id !== chatId) return session;
+        const nextMessages = typeof update === "function" ? update(session.messages) : update;
+        const firstUserMessage = nextMessages.find((message) => message.role === "user")?.content.trim();
+        return {
+          ...session,
+          title: session.title === "新对话" && firstUserMessage ? firstUserMessage.slice(0, 24) : session.title,
+          messages: nextMessages,
+          updatedAt: Date.now(),
+        };
+      }),
+    }));
+  }
 
   async function submit(text = input) {
     const value = text.trim();
     if (!value || busy) return;
+    const chatId = activeChatId;
     const user: ChatMessage = { id: uid(), role: "user", content: value, createdAt: Date.now() };
     const next = [...messages, user];
-    setMessages(next); setInput(""); setBusy(true); setActiveRuns([]);
+    updateChatMessages(chatId, next); setInput(""); setBusy(true); setActiveRuns([]);
     try {
       const result = await runAgent(next, settings, tools, setActiveRuns);
-      setMessages((current) => [...current, { id: uid(), role: "assistant", content: result.content, toolRuns: result.toolRuns, createdAt: Date.now() }]);
+      updateChatMessages(chatId, (current) => [...current, { id: uid(), role: "assistant", content: result.content, toolRuns: result.toolRuns, createdAt: Date.now() }]);
     } catch (error) {
-      setMessages((current) => [...current, { id: uid(), role: "assistant", content: error instanceof Error ? error.message : String(error), error: true, createdAt: Date.now() }]);
+      updateChatMessages(chatId, (current) => [...current, { id: uid(), role: "assistant", content: error instanceof Error ? error.message : String(error), error: true, createdAt: Date.now() }]);
     } finally { setBusy(false); setActiveRuns([]); }
   }
 
   function newChat() {
-    clearChat(); setMessages([]); setActiveRuns([]); setMobileNav(false);
+    if (busy) return;
+    const session = createChatSession();
+    setChatState((old) => ({ sessions: [session, ...old.sessions], activeId: session.id }));
+    setInput(""); setActiveRuns([]); setMobileNav(false);
+  }
+
+  function switchChat(id: string) {
+    if (busy || id === activeChatId) return;
+    setChatState((old) => ({ ...old, activeId: id }));
+    setInput(""); setActiveRuns([]); setMobileNav(false);
+  }
+
+  function deleteChat(id: string) {
+    if (busy) return;
+    setChatState((old) => {
+      const remaining = old.sessions.filter((session) => session.id !== id);
+      if (!remaining.length) {
+        const session = createChatSession();
+        return { sessions: [session], activeId: session.id };
+      }
+      return { sessions: remaining, activeId: old.activeId === id ? remaining[0].id : old.activeId };
+    });
   }
 
   function openSettings() { setDraft(structuredClone(settings)); setSettingsError(""); setSettingsOpen(true); }
@@ -164,7 +214,7 @@ export default function App() {
     setStatus((old) => ({ ...old, [key]: { state: "testing" } }));
     try {
       const discovered = await discoverOpenApi(service);
-      setTools((old) => mergeDiscoveredTools(old, discovered, service.id));
+      setTools((old) => applyPluginSelection(mergeDiscoveredTools(old, discovered, service.id), loadInstalledPlugins()));
       setStatus((old) => ({ ...old, [key]: { state: "ok", latency: discovered.length } }));
     } catch { setStatus((old) => ({ ...old, [key]: { state: "error" } })); }
   }
@@ -173,18 +223,21 @@ export default function App() {
     setDraft((old) => ({ ...old, services: old.services.map((item) => item.id === id ? { ...item, ...patch } : item) }));
   }
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${toolsOpen ? "" : "tools-collapsed"}`}>
     <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
       <div className="brand"><span className="brand-mark"><Orbit size={22} /></span><div><strong>轨道智枢</strong><small>ORBIT COPILOT</small></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="关闭菜单"><X /></button></div>
-      <button className="new-chat" onClick={newChat}><MessageSquarePlus size={17} /> 新建任务 <span>Ctrl K</span></button>
+      <button className="new-chat" onClick={newChat} disabled={busy}><MessageSquarePlus size={17} /> 新建对话</button>
       <div className="sidebar-label">工作空间</div>
       <nav className="nav-list">
         <button className="active"><Sparkles size={17} /> 智能对话 <span className="live-dot" /></button>
         <a href={serviceMap.debris?.dashboardUrl} target="_blank" rel="noreferrer"><Gauge size={17} /> 碎片监测 <ExternalLink size={13} /></a>
         <a href={serviceMap.starmad?.dashboardUrl} target="_blank" rel="noreferrer"><Database size={17} /> 协同设计 <ExternalLink size={13} /></a>
       </nav>
-      <div className="sidebar-label">最近</div>
-      <div className="history-item"><span>当前对话</span><small>{messages.length ? `${messages.length} 条消息` : "尚未开始"}</small></div>
+      <div className="sidebar-label">对话历史</div>
+      <div className="history-list">{[...chatState.sessions].sort((a, b) => b.updatedAt - a.updatedAt).map((session) => <div className={`history-item ${session.id === activeChatId ? "active" : ""}`} key={session.id}>
+        <button className="history-select" onClick={() => switchChat(session.id)} disabled={busy}><span>{session.title}</span><small>{session.messages.length ? `${session.messages.length} 条消息` : "尚未开始"}</small></button>
+        <button className="history-delete" onClick={() => deleteChat(session.id)} disabled={busy} aria-label={`删除对话 ${session.title}`}><Trash2 size={13} /></button>
+      </div>)}</div>
       <div className="sidebar-spacer" />
       <div className="privacy-note"><ShieldCheck size={16} /><div><strong>本地优先</strong><small>配置与对话仅保存在本机</small></div></div>
       <button className="settings-link" onClick={openPluginSetup}><Boxes size={17} /> 插件中心 <span className="plugin-count">{selectedPlugins.length}</span><ChevronRight size={15} /></button>
@@ -198,7 +251,7 @@ export default function App() {
         <div className="top-actions"><span className="connection-pill"><span /> 本地模式</span><button onClick={() => setToolsOpen(!toolsOpen)} aria-label="切换工具面板">{toolsOpen ? <PanelRightClose /> : <PanelRightOpen />}</button><button onClick={openSettings} aria-label="设置"><Settings /></button></div>
       </header>
 
-      <section className="chat-area">
+      <section className="chat-area" ref={chatAreaRef}>
         {!messages.length ? <div className="welcome">
           <div className="orb"><div className="orb-core"><Bot size={34} /></div><i /><i /></div>
           <span className="welcome-kicker">OFFLINE-FIRST AI OPERATIONS</span>
@@ -214,21 +267,22 @@ export default function App() {
             </div>
           </article>)}
           {busy && <article className="message assistant"><div className="avatar"><Bot size={18} /></div><div className="message-body"><div className="message-meta">轨道智枢 <span className="thinking">正在编排任务</span></div>{activeRuns.length ? <ToolRuns runs={activeRuns} /> : <div className="typing"><i /><i /><i /></div>}</div></article>}
-          <div ref={bottomRef} />
+          <div />
         </div>}
       </section>
 
       <footer className="composer-wrap"><div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="询问监测数据、发射风险或协同设计…" rows={1} disabled={busy} /><button onClick={() => submit()} disabled={!input.trim() || busy} aria-label="发送">{busy ? <LoaderCircle className="spin" /> : <Send />}</button></div><div className="composer-foot"><span><Wrench size={13} /> {enabledCount} 个工具已启用</span><span>Enter 发送 · Shift Enter 换行</span></div></footer>
     </main>
 
-    {toolsOpen && <aside className="context-panel"><div className="panel-head"><div><span className="eyebrow">CONNECTED SYSTEMS</span><h3>能力与连接</h3></div><button onClick={() => setToolsOpen(false)}><X /></button></div>
+    {toolsOpen && <aside className="context-panel"><div className="panel-head"><div><span className="eyebrow">CONNECTED SYSTEMS</span><h3>能力与连接</h3></div><button onClick={() => setToolsOpen(false)} aria-label="收起右侧工具栏"><PanelRightClose /></button></div>
       <div className="service-stack">{settings.services.map((service) => { const info = status[service.id] || { state: "idle" as const }; const sync = status[`${service.id}-sync`] || { state: "idle" as const }; return <div className="service-card" key={service.id}><div className="service-title"><span className={`service-icon ${service.id}`}><Activity /></span><div><strong>{service.name}</strong><small>{service.id === "debris" ? "8502 REST API" : "18502 REST API"}</small></div><span className={`status-dot ${info.state}`} /></div><div className="service-url">{service.apiUrl.replace(/^https?:\/\//, "")}</div><div className="service-actions"><button onClick={() => testService(service)} disabled={info.state === "testing"}>{info.state === "ok" && <Check size={14} />}{statusLabel(info.state, info.latency)}</button><button onClick={() => syncOpenApi(service)} disabled={sync.state === "testing"}><RefreshCw className={sync.state === "testing" ? "spin" : ""} size={13} />{sync.state === "ok" ? `发现 ${sync.latency} 项` : sync.state === "error" ? "同步失败" : "同步 OpenAPI"}</button></div></div>; })}</div>
       <div className="tool-heading"><span>工具注册表</span><em>{enabledCount}/{tools.length}</em></div>
-      <div className="tool-list">{tools.map((tool) => <label key={tool.id}><span><strong>{tool.title}</strong><small>{tool.serviceId === "debris" ? "碎片监测" : "协同设计"}</small></span><input type="checkbox" checked={tool.enabled} onChange={() => setTools((old) => old.map((item) => item.id === tool.id ? { ...item, enabled: !item.enabled } : item))} /><i /></label>)}</div>
+      <div className="tool-list">{visibleTools.map((tool) => <label key={tool.id}><span><strong>{tool.title}</strong><small>{tool.method} · {tool.serviceId === "debris" ? "碎片监测" : "协同设计"}</small></span><input type="checkbox" checked={tool.enabled} onChange={() => setTools((old) => old.map((item) => item.id === tool.id ? { ...item, enabled: !item.enabled } : item))} /><i /></label>)}</div>
+      <div className="tool-pagination"><button onClick={() => setToolPage((page) => Math.max(0, page - 1))} disabled={toolPage === 0} aria-label="上一页"><ChevronLeft /></button><span>第 {toolPage + 1} / {toolPageCount} 页</span><button onClick={() => setToolPage((page) => Math.min(toolPageCount - 1, page + 1))} disabled={toolPage >= toolPageCount - 1} aria-label="下一页"><ChevronRight /></button></div>
     </aside>}
 
     {pluginSetupOpen && <div className="modal-backdrop"><section className="settings-modal plugin-modal" role="dialog" aria-modal="true" aria-label="插件中心"><header><div><span className="eyebrow">OPTIONAL PLUGINS</span><h2>{hasCompletedPluginSetup() ? "插件中心" : "选择要启用的插件"}</h2><p>插件已随安装器离线内置；勾选后启用对应连接与安全工具。</p></div>{hasCompletedPluginSetup() && <button onClick={() => setPluginSetupOpen(false)} aria-label="关闭插件中心"><X /></button>}</header>
-      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = DEFAULT_TOOLS.filter((tool) => tool.serviceId === plugin.id).length; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><em>{toolCount} 个内置工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 动态发现的写入、删除等操作不会自动启用，需在工具注册表中逐项审核。</p></div>
+      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = DEFAULT_TOOLS.filter((tool) => tool.serviceId === plugin.id).length; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><em>{toolCount} 个内置工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 注册、登录、注销、密码和管理员接口不会注册；其余接口在插件启用时默认打开。</p></div>
       <footer><span>{selectedPlugins.length ? `已选择 ${selectedPlugins.length} 个插件` : "仅安装基础程序"}</span>{hasCompletedPluginSetup() && <button className="secondary" onClick={() => setPluginSetupOpen(false)}>取消</button>}<button className="primary" onClick={commitPluginSetup}>{hasCompletedPluginSetup() ? "应用选择" : "完成安装"}</button></footer>
     </section></div>}
 

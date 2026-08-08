@@ -19,8 +19,13 @@ type OpenApi = {
 };
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
-const SAFE_POST = /(^|[_/.-])(query|search|predict|forecast|assess|probe|preview|simulate)([_/.-]|$)/i;
 const HIGH_COST = /(risk|simulate|compute|matlab|rollup|provision)/i;
+const SENSITIVE_API_PATHS = [
+  /^\/api\/admin(?:\/|$)/i,
+  /^\/api\/auth\/(?!me(?:\/|$))/i,
+  /(?:^|\/)(?:change-password|reset-password)(?:\/|$)/i,
+];
+export const DISCOVERY_POLICY_VERSION = 2;
 
 const safeName = (value: string) => {
   const clean = value.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").slice(0, 64);
@@ -85,10 +90,9 @@ function resolveSchema(schema: Schema | undefined, document: OpenApi, seen = new
   return result;
 }
 
-function isSafeByDefault(operation: Operation, method: string, path: string): boolean {
-  if (method === "GET") return true;
-  if (method !== "POST") return false;
-  return SAFE_POST.test(`${operation.operationId || ""} ${operation.summary || ""} ${path}`);
+export function isSensitiveApiTool(tool: Pick<ApiTool, "path">): boolean {
+  const path = tool.path.split("?")[0].replace(/\/+$/, "") || "/";
+  return SENSITIVE_API_PATHS.some((pattern) => pattern.test(path));
 }
 
 function operationKey(tool: Pick<ApiTool, "serviceId" | "method" | "path">): string {
@@ -97,8 +101,7 @@ function operationKey(tool: Pick<ApiTool, "serviceId" | "method" | "path">): str
 
 export function mergeDiscoveredTools(current: ApiTool[], discovered: ApiTool[], serviceId: ServiceSettings["id"]): ApiTool[] {
   const prefix = `openapi-${serviceId}-`;
-  const previous = new Map(current.filter((tool) => tool.id.startsWith(prefix)).map((tool) => [tool.id, tool]));
-  const base = current.filter((tool) => !tool.id.startsWith(prefix));
+  const base = current.filter((tool) => !tool.id.startsWith(prefix) && !isSensitiveApiTool(tool));
   const discoveredByOperation = new Map(discovered.map((tool) => [operationKey(tool), tool]));
   const represented = new Set<string>();
   const updatedBase = base.map((tool) => {
@@ -116,10 +119,7 @@ export function mergeDiscoveredTools(current: ApiTool[], discovered: ApiTool[], 
       longRunning: tool.longRunning ?? found.longRunning,
     };
   });
-  const additions = discovered.filter((tool) => !represented.has(operationKey(tool))).map((tool) => {
-    const saved = previous.get(tool.id);
-    return saved && saved.discoveryPolicyVersion === tool.discoveryPolicyVersion ? { ...tool, enabled: saved.enabled } : tool;
-  });
+  const additions = discovered.filter((tool) => !isSensitiveApiTool(tool) && !represented.has(operationKey(tool)));
   return [...updatedBase, ...additions];
 }
 
@@ -141,6 +141,7 @@ export async function discoverOpenApi(service: ServiceSettings): Promise<ApiTool
       const upper = method.toUpperCase();
       if (!HTTP_METHODS.has(upper) || !rawOperation || Array.isArray(rawOperation)) continue;
       const operation = rawOperation as Operation;
+      if (isSensitiveApiTool({ path })) continue;
       const properties: Record<string, Schema> = {};
       const required = new Set<string>();
       const queryParams: string[] = [];
@@ -181,13 +182,13 @@ export async function discoverOpenApi(service: ServiceSettings): Promise<ApiTool
         method: upper as ApiTool["method"],
         path,
         inputSchema: { type: "object", properties, required: [...required] } as JsonSchema,
-        enabled: isSafeByDefault(operation, upper, path),
+        enabled: true,
         longRunning: HIGH_COST.test(`${operation.operationId || ""} ${operation.summary || ""} ${path}`),
         queryParams: [...new Set(queryParams)],
         headerParams: [...new Set(headerParams)],
         hasRequestBody: Boolean(media?.schema),
         bodyParam,
-        discoveryPolicyVersion: 1,
+        discoveryPolicyVersion: DISCOVERY_POLICY_VERSION,
       });
     }
   }

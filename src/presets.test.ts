@@ -26,11 +26,11 @@ describe("default integration registry", () => {
     expect(PLUGIN_PACKS.every((plugin) => DEFAULT_TOOLS.some((tool) => tool.serviceId === plugin.id))).toBe(true);
   });
 
-  it("enables built-ins without enabling discovered write tools", () => {
+  it("enables every allowed tool from selected plugins", () => {
     const discovered = { ...DEFAULT_TOOLS[0], id: "openapi-debris-delete", method: "DELETE" as const, enabled: false };
     const selected = applyPluginSelection([...DEFAULT_TOOLS, discovered], ["debris"]);
     expect(selected.filter((tool) => tool.serviceId === "debris" && !tool.id.startsWith("openapi-")).every((tool) => tool.enabled)).toBe(true);
-    expect(selected.find((tool) => tool.id === discovered.id)?.enabled).toBe(false);
+    expect(selected.find((tool) => tool.id === discovered.id)?.enabled).toBe(true);
     expect(selected.filter((tool) => tool.serviceId === "starmad").every((tool) => !tool.enabled)).toBe(true);
   });
 });

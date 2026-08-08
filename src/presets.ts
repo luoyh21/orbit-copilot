@@ -1,4 +1,5 @@
 import type { ApiTool, AppSettings, ServiceSettings } from "./types";
+import { isSensitiveApiTool } from "./openapi";
 
 export interface PluginPack {
   id: ServiceSettings["id"];
@@ -120,11 +121,8 @@ export function applyPluginSelection(
   selectedPluginIds: ServiceSettings["id"][],
 ): ApiTool[] {
   const selected = new Set(selectedPluginIds);
-  const builtInIds = new Set(DEFAULT_TOOLS.map((tool) => tool.id));
-  return tools.map((tool) => ({
+  return tools.filter((tool) => !isSensitiveApiTool(tool)).map((tool) => ({
     ...tool,
-    enabled: selected.has(tool.serviceId)
-      ? (builtInIds.has(tool.id) ? true : tool.enabled)
-      : false,
+    enabled: selected.has(tool.serviceId),
   }));
 }

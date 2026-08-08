@@ -1,8 +1,10 @@
 import { DEFAULT_SETTINGS } from "./presets";
-import type { ApiTool, AppSettings, ChatMessage, ServiceSettings } from "./types";
+import { DISCOVERY_POLICY_VERSION, isSensitiveApiTool } from "./openapi";
+import type { ApiTool, AppSettings, ChatMessage, ChatSession, ChatState, ServiceSettings } from "./types";
 
 const SETTINGS_KEY = "orbit-copilot.settings.v1";
 const CHAT_KEY = "orbit-copilot.chat.v1";
+const CHATS_KEY = "orbit-copilot.chats.v2";
 const TOOLS_KEY = "orbit-copilot.tools.v1";
 const PLUGINS_KEY = "orbit-copilot.plugins.v1";
 const PLUGIN_SETUP_KEY = "orbit-copilot.plugin-setup.v1";
@@ -57,28 +59,62 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   }
 }
 
-export function loadChat(): ChatMessage[] {
-  try { return JSON.parse(localStorage.getItem(CHAT_KEY) || "[]"); } catch { return []; }
+export function createChatSession(messages: ChatMessage[] = []): ChatSession {
+  const now = Date.now();
+  const firstUserMessage = messages.find((message) => message.role === "user")?.content.trim();
+  return {
+    id: crypto.randomUUID(),
+    title: firstUserMessage ? firstUserMessage.slice(0, 24) : "新对话",
+    messages: messages.slice(-100),
+    createdAt: messages[0]?.createdAt || now,
+    updatedAt: messages.at(-1)?.createdAt || now,
+  };
 }
 
-export function saveChat(messages: ChatMessage[]): void {
-  localStorage.setItem(CHAT_KEY, JSON.stringify(messages.slice(-100)));
+export function loadChats(): ChatState {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHATS_KEY) || "null") as ChatState | null;
+    if (saved && Array.isArray(saved.sessions) && saved.sessions.length) {
+      const activeId = saved.sessions.some((session) => session.id === saved.activeId) ? saved.activeId : saved.sessions[0].id;
+      return { sessions: saved.sessions, activeId };
+    }
+    const legacy = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]") as ChatMessage[];
+    const session = createChatSession(Array.isArray(legacy) ? legacy : []);
+    return { sessions: [session], activeId: session.id };
+  } catch {
+    const session = createChatSession();
+    return { sessions: [session], activeId: session.id };
+  }
 }
 
-export function clearChat(): void { localStorage.removeItem(CHAT_KEY); }
+export function saveChats(state: ChatState): void {
+  const sessions = [...state.sessions]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, 50)
+    .map((session) => ({ ...session, messages: session.messages.slice(-100) }));
+  const activeId = sessions.some((session) => session.id === state.activeId) ? state.activeId : sessions[0]?.id || "";
+  localStorage.setItem(CHATS_KEY, JSON.stringify({ sessions, activeId }));
+  localStorage.removeItem(CHAT_KEY);
+}
 
 export function loadTools(fallback: ApiTool[]): ApiTool[] {
   try {
     const saved = JSON.parse(localStorage.getItem(TOOLS_KEY) || "null");
-    if (!Array.isArray(saved)) return fallback;
-    const savedById = new Map(saved.map((tool: ApiTool) => [tool.id, tool]));
-    const builtIns = fallback.map((tool) => ({ ...tool, enabled: savedById.get(tool.id)?.enabled ?? tool.enabled }));
-    return [...builtIns, ...saved.filter((tool: ApiTool) => tool.id?.startsWith("openapi-") && !fallback.some((item) => item.id === tool.id))];
-  } catch { return fallback; }
+    const selected = new Set(loadInstalledPlugins());
+    if (!Array.isArray(saved)) return fallback.filter((tool) => !isSensitiveApiTool(tool)).map((tool) => ({ ...tool, enabled: selected.has(tool.serviceId) }));
+    const dynamic = saved
+      .filter((tool: ApiTool) => tool.id?.startsWith("openapi-") && !isSensitiveApiTool(tool) && !fallback.some((item) => item.id === tool.id))
+      .map((tool: ApiTool) => ({ ...tool, enabled: selected.has(tool.serviceId), discoveryPolicyVersion: DISCOVERY_POLICY_VERSION }));
+    const builtIns = fallback.filter((tool) => !isSensitiveApiTool(tool)).map((tool) => ({ ...tool, enabled: selected.has(tool.serviceId) }));
+    return [...builtIns, ...dynamic];
+  } catch {
+    const selected = new Set(loadInstalledPlugins());
+    return fallback.filter((tool) => !isSensitiveApiTool(tool)).map((tool) => ({ ...tool, enabled: selected.has(tool.serviceId) }));
+  }
 }
 
 export function saveTools(tools: ApiTool[]): void {
-  localStorage.setItem(TOOLS_KEY, JSON.stringify(tools));
+  localStorage.setItem(TOOLS_KEY, JSON.stringify(tools.filter((tool) => !isSensitiveApiTool(tool))));
 }
 
 export function hasConfiguredLlm(): boolean {

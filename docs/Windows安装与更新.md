@@ -13,7 +13,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.2_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.3_x64-setup.exe
 ```
 
 若 Windows 安全策略会短暂锁定源码目录中新生成的 Rust 辅助程序，可将 Cargo 构建产物放到本机应用数据目录；构建脚本会自动从该目录查找安装器：
@@ -32,7 +32,9 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 3. 首次启动进入“设置”，填写模型地址、模型名和 Key；再检查两套业务服务连接。
 4. 如使用自签名 HTTPS，只对确定可信的服务开启“接受自签名证书”。
 
-首次启动会打开插件中心。勾选需要的内置插件后点击“完成安装”；未勾选的插件不会向模型注册对应工具。之后可随时从左侧“插件中心”重新选择，不需要重复运行安装器。点击服务卡片中的“同步 OpenAPI”即可更新全部接口；只读与明确的查询/预览操作默认启用，写入、删除、账号和 Commit 等高风险操作默认关闭。
+首次启动会打开插件中心。勾选需要的内置插件后点击“完成安装”；未勾选的插件不会向模型注册对应工具。之后可随时从左侧“插件中心”重新选择，不需要重复运行安装器。点击服务卡片中的“同步 OpenAPI”即可更新全部接口；注册、登录、注销、密码和管理员接口完全不注册，其余接口在对应插件启用时默认打开。
+
+左侧“新建对话”可保留并新开多条本地对话历史，可随时切换或删除。右侧工具栏可通过顶栏或面板标题处的按钮收起；工具注册表每页显示 12 项，可用底部按钮翻页，聊天区、历史列表与工具列表均有独立滚动条。
 
 模型 Key 与业务 Bearer Token 存储在 Windows Credential Manager，服务名为 `com.starmad.orbitcopilot`；应用普通设置与聊天记录存储在当前用户应用数据中。
 
@@ -59,4 +61,4 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 - 无公网时，Windows 客户端可调用本机或局域网 OpenAI-compatible 模型。
 - 8501/18501 页面入口可打开，8502/18502 API 健康检查成功。
 - 自签名证书开关仅对明确配置的单个服务生效。
-- 动态发现的所有写操作保持默认关闭。
+- 敏感接口不出现在工具注册表；其余接口在已选插件内默认打开，分页、开关和滚动均正常。

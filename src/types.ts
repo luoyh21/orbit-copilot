@@ -56,6 +56,19 @@ export interface ChatMessage {
   error?: boolean;
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChatState {
+  sessions: ChatSession[];
+  activeId: string;
+}
+
 export interface ToolRun {
   id: string;
   name: string;
