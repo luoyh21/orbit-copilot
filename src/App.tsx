@@ -9,6 +9,7 @@ import {
 import { runAgent } from "./agent";
 import { discoverOpenApi, mergeDiscoveredTools } from "./openapi";
 import { applyPluginSelection, DEFAULT_TOOLS, PLUGIN_PACKS } from "./presets";
+import { ensureManagedStarmadSession } from "./starmad-auth";
 import { clearChat, hasCompletedPluginSetup, hasConfiguredLlm, hydrateSecrets, loadChat, loadInstalledPlugins, loadSettings, loadTools, saveChat, saveInstalledPlugins, saveSettings, saveTools } from "./storage";
 import { testEndpoint } from "./transport";
 import type { ApiTool, AppSettings, ChatMessage, ServiceSettings, ToolRun } from "./types";
@@ -46,11 +47,34 @@ export default function App() {
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
+  const starmadAuthStarted = useRef(false);
   const enabledCount = tools.filter((tool) => tool.enabled).length;
 
   useEffect(() => { saveChat(messages); }, [messages]);
   useEffect(() => { saveTools(tools); }, [tools]);
-  useEffect(() => { hydrateSecrets(settings).then((value) => { setSettings(value); setDraft(structuredClone(value)); }); }, []);
+  useEffect(() => {
+    if (starmadAuthStarted.current) return;
+    starmadAuthStarted.current = true;
+    hydrateSecrets(settings).then(async (value) => {
+      let next = value;
+      if (hasCompletedPluginSetup() && loadInstalledPlugins().includes("starmad")) {
+        const service = value.services.find((item) => item.id === "starmad");
+        if (service) {
+          const started = performance.now();
+          setStatus((old) => ({ ...old, starmad: { state: "testing" } }));
+          try {
+            const session = await ensureManagedStarmadSession(service);
+            next = { ...value, services: value.services.map((item) => item.id === "starmad" ? session.service : item) };
+            setStatus((old) => ({ ...old, starmad: { state: "ok", latency: Math.round(performance.now() - started) } }));
+          } catch {
+            setStatus((old) => ({ ...old, starmad: { state: "error" } }));
+          }
+        }
+      }
+      setSettings(next);
+      setDraft(structuredClone(next));
+    });
+  }, []);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, activeRuns]);
 
   const serviceMap = useMemo(() => Object.fromEntries(settings.services.map((item) => [item.id, item])), [settings.services]);
@@ -84,9 +108,25 @@ export default function App() {
     setSelectedPlugins((old) => old.includes(id) ? old.filter((item) => item !== id) : [...old, id]);
   }
 
-  function commitPluginSetup() {
+  async function commitPluginSetup() {
     setTools((old) => applyPluginSelection(old, selectedPlugins));
     saveInstalledPlugins(selectedPlugins);
+    if (selectedPlugins.includes("starmad")) {
+      const service = settings.services.find((item) => item.id === "starmad");
+      if (service) {
+        const started = performance.now();
+        setStatus((old) => ({ ...old, starmad: { state: "testing" } }));
+        try {
+          const session = await ensureManagedStarmadSession(service);
+          const next = { ...settings, services: settings.services.map((item) => item.id === "starmad" ? session.service : item) };
+          setSettings(next);
+          setDraft(structuredClone(next));
+          setStatus((old) => ({ ...old, starmad: { state: "ok", latency: Math.round(performance.now() - started) } }));
+        } catch {
+          setStatus((old) => ({ ...old, starmad: { state: "error" } }));
+        }
+      }
+    }
     setPluginSetupOpen(false);
     if (llmSetupNeeded) setSettingsOpen(true);
   }

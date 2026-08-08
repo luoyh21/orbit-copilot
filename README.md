@@ -12,6 +12,7 @@
 - Windows 端通过 Rust `reqwest` 直接访问局域网，绕过浏览器 CORS；可针对单个服务接受自签名证书。
 - 对要求显式关闭推理模式的 Chat Completions 模型，工具请求遇到对应兼容性错误时会自动以 `reasoning_effort: none` 重试。
 - Windows API Key 与 Bearer Token 存入系统凭据管理器；普通设置和最近 100 条消息保存在本机。Web 版密钥只保存到当前标签页会话，不写入服务器日志或持久化存储。
+- Windows 端首次启用 STARMAD 插件时会注册一个唯一的 `orbit-copilot-*` 专用账号；随机密码仅存入 Windows 凭据管理器，之后每次启动自动登录并刷新 24 小时会话 Token。Web 版不会自动创建账号。
 - NSIS 当前用户安装器，无需管理员权限；同一应用 ID 的新版安装器可直接覆盖更新且保留设置和凭据。
 - 单一 Windows 安装器内置插件中心；首次启动可勾选“空间碎片监测”和“STARMAD-COMET”，以后可从侧栏调整。同步当前两套 OpenAPI 后共有 59 个只读或安全查询工具默认启用，高风险接口仍可见但默认关闭。
 
