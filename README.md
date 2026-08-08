@@ -66,7 +66,13 @@ curl http://127.0.0.1:18600/healthz
 
 ## Windows 安装与更新
 
-详见 [Windows 安装与更新](docs/Windows安装与更新.md)。Windows 机器执行 `scripts/build-windows.ps1` 后，NSIS 安装器位于 `src-tauri/target/release/bundle/nsis/`。也可在 GitHub Actions 手动触发 `windows-installer.yml` 下载构建产物。
+详见 [Windows 安装与更新](docs/Windows安装与更新.md)。在 Windows PowerShell 中执行下面一条命令，会将最新公开版安装器下载到当前用户桌面、用 GitHub Release 提供的 SHA-256 摘要校验、静默安装，然后启动应用并保持运行：
+
+```powershell
+$script = Join-Path $env:TEMP "orbit-copilot-install-smoke-test.ps1"; Invoke-WebRequest "https://raw.githubusercontent.com/luoyh21/orbit-copilot/main/scripts/install-smoke-test.ps1" -OutFile $script; powershell -ExecutionPolicy Bypass -File $script -KeepRunning
+```
+
+从源码构建时，执行 `scripts/build-windows.ps1`。脚本会构建 NSIS、安装并启动测试，安装器位于 `src-tauri/target/release/bundle/nsis/`；只构建不安装可追加 `-SkipInstallSmokeTest`。GitHub Actions 对每个 PR 和版本标签执行同一套 Windows 安装启动测试。
 
 ## 安全边界
 

@@ -10,13 +10,21 @@
 PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 ```
 
-脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，最后生成：
+脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.1.0_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.1.1_x64-setup.exe
 ```
 
 ## 首次安装
+
+如需直接安装最新公开版本，在 Windows PowerShell 执行：
+
+```powershell
+$script = Join-Path $env:TEMP "orbit-copilot-install-smoke-test.ps1"; Invoke-WebRequest "https://raw.githubusercontent.com/luoyh21/orbit-copilot/main/scripts/install-smoke-test.ps1" -OutFile $script; powershell -ExecutionPolicy Bypass -File $script -KeepRunning
+```
+
+它会把安装器保存到当前 Windows 用户的桌面，读取 GitHub Release 的 SHA-256 摘要进行完整性校验，静默安装，再启动应用并确认进程至少存活 10 秒。安装器保留在桌面，便于离线重装；应用保持运行。也可以按以下方式手工安装：
 
 1. 双击 `setup.exe`。
 2. 安装范围为当前用户，默认进入 `%LOCALAPPDATA%`，无需管理员权限。
@@ -37,7 +45,7 @@ src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.1.0_x64-setup.
 
 ## 自动构建流程
 
-仓库内 `.github/workflows/windows-installer.yml` 支持手动触发和 `v*` 标签触发。它在 `windows-latest` 上完成依赖安装、前端校验和 NSIS 构建，并上传安装器 artifact。正式分发前建议增加组织代码签名证书；未签名安装器可能触发 SmartScreen 提示。
+仓库内 `.github/workflows/windows-installer.yml` 支持 PR、手动触发和 `v*` 标签触发。它在 `windows-latest` 上完成依赖安装、前端校验、NSIS 构建、静默安装和真实应用启动，再上传安装器 artifact。正式分发前建议增加组织代码签名证书；当前未签名安装器可能触发 SmartScreen 提示。
 
 ## 发布验收清单
 
