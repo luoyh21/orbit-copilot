@@ -13,7 +13,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.3_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.4_x64-setup.exe
 ```
 
 若 Windows 安全策略会短暂锁定源码目录中新生成的 Rust 辅助程序，可将 Cargo 构建产物放到本机应用数据目录；构建脚本会自动从该目录查找安装器：
@@ -25,14 +25,14 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 
 ## 首次安装
 
-安装和更新都只需要运行发布包中的 `setup.exe`，无需另外运行 PowerShell 或其他程序：
+安装和更新都只需要运行发布包中的 `setup.exe`，无需另外运行 PowerShell、Node.js、Rust、Visual C++ Build Tools 或其他程序。安装包内置 WebView2 离线安装程序，可用于未安装 WebView2 Runtime 的全新 Windows 10/11：
 
 1. 双击 `setup.exe`；首次运行完成安装，安装过旧版本时直接覆盖更新。
 2. 安装范围为当前用户，默认进入 `%LOCALAPPDATA%`，无需管理员权限。
 3. 首次启动进入“设置”，填写模型地址、模型名和 Key；再检查两套业务服务连接。
 4. 如使用自签名 HTTPS，只对确定可信的服务开启“接受自签名证书”。
 
-首次启动会打开插件中心。勾选需要的内置插件后点击“完成安装”；未勾选的插件不会向模型注册对应工具。之后可随时从左侧“插件中心”重新选择，不需要重复运行安装器。点击服务卡片中的“同步 OpenAPI”即可更新全部接口；注册、登录、注销、密码和管理员接口完全不注册，其余接口在对应插件启用时默认打开。
+首次启动会打开插件中心。勾选需要的内置插件后点击“完成安装”；程序会自动配置 STARMAD 专用账号并同步已选服务的全部 OpenAPI，完成后自动显示 LLM 设置。填写有效的 OpenAI-compatible API 地址、模型名称和 Key（本地无鉴权模型可不填 Key）并保存，即可直接对话调用全部已选功能，不需要再点击“同步 OpenAPI”。未勾选的插件不会向模型注册对应工具；以后每次启动也会自动刷新接口定义。注册、登录、注销、密码和管理员接口完全不注册，其余接口在对应插件启用时默认打开。
 
 左侧“新建对话”可保留并新开多条本地对话历史，可随时切换或删除。右侧工具栏可通过顶栏或面板标题处的按钮收起；工具注册表每页显示 12 项，可用底部按钮翻页，聊天区、历史列表与工具列表均有独立滚动条。
 
@@ -60,5 +60,8 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 - 覆盖安装后模型地址、API Key、业务 Token、工具开关和聊天记录符合预期。
 - 无公网时，Windows 客户端可调用本机或局域网 OpenAI-compatible 模型。
 - 8501/18501 页面入口可打开，8502/18502 API 健康检查成功。
+- 点击“碎片监测”和“协同设计”会由 Windows 默认浏览器打开对应页面。
+- 清空用户态配置模拟首次运行：完成插件选择后自动出现 88/88 个工具，再填写 LLM 设置并完成一次真实工具对话。
+- 在未安装 WebView2 Runtime 的 Windows 沙箱或虚拟机中运行 setup，确认内置离线运行时可完成安装并启动。
 - 自签名证书开关仅对明确配置的单个服务生效。
 - 敏感接口不出现在工具注册表；其余接口在已选插件内默认打开，分页、开关和滚动均正常。

@@ -45,6 +45,7 @@ export default function App() {
   const [mobileNav, setMobileNav] = useState(false);
   const [tools, setTools] = useState<ApiTool[]>(() => loadTools(DEFAULT_TOOLS));
   const [pluginSetupOpen, setPluginSetupOpen] = useState(() => !hasCompletedPluginSetup());
+  const [pluginCommitting, setPluginCommitting] = useState(false);
   const [selectedPlugins, setSelectedPlugins] = useState<ServiceSettings["id"][]>(() => loadInstalledPlugins());
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
@@ -81,6 +82,7 @@ export default function App() {
       }
       setSettings(next);
       setDraft(structuredClone(next));
+      if (hasCompletedPluginSetup()) await syncInstalledOpenApis(next, loadInstalledPlugins());
     });
   }, []);
   useEffect(() => {
@@ -158,9 +160,50 @@ export default function App() {
     setSelectedPlugins((old) => old.includes(id) ? old.filter((item) => item !== id) : [...old, id]);
   }
 
+  async function openDashboard(url: string | undefined) {
+    if (!url) return;
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error("unsupported protocol");
+      if ("__TAURI_INTERNALS__" in window) {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(parsed.toString());
+      } else {
+        window.open(parsed.toString(), "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      window.alert("无法打开页面入口，请在设置中检查页面地址。");
+    }
+  }
+
+  async function syncInstalledOpenApis(currentSettings: AppSettings, pluginIds: ServiceSettings["id"][]) {
+    const selected = new Set(pluginIds);
+    const services = currentSettings.services.filter((service) => selected.has(service.id));
+    setStatus((old) => Object.fromEntries(Object.entries(old).concat(services.map((service) => [`${service.id}-sync`, { state: "testing" as const }]))));
+    const results = await Promise.all(services.map(async (service) => {
+      try {
+        return { service, discovered: await discoverOpenApi(service) };
+      } catch {
+        return { service, discovered: null };
+      }
+    }));
+    setTools((old) => {
+      const merged = results.reduce((current, result) => result.discovered ? mergeDiscoveredTools(current, result.discovered, result.service.id) : current, old);
+      return applyPluginSelection(merged, pluginIds);
+    });
+    setStatus((old) => {
+      const next = { ...old };
+      for (const result of results) next[`${result.service.id}-sync`] = result.discovered ? { state: "ok", latency: result.discovered.length } : { state: "error" };
+      return next;
+    });
+  }
+
   async function commitPluginSetup() {
+    if (pluginCommitting) return;
+    setPluginCommitting(true);
     setTools((old) => applyPluginSelection(old, selectedPlugins));
     saveInstalledPlugins(selectedPlugins);
+    let nextSettings = settings;
     if (selectedPlugins.includes("starmad")) {
       const service = settings.services.find((item) => item.id === "starmad");
       if (service) {
@@ -169,6 +212,7 @@ export default function App() {
         try {
           const session = await ensureManagedStarmadSession(service);
           const next = { ...settings, services: settings.services.map((item) => item.id === "starmad" ? session.service : item) };
+          nextSettings = next;
           setSettings(next);
           setDraft(structuredClone(next));
           setStatus((old) => ({ ...old, starmad: { state: "ok", latency: Math.round(performance.now() - started) } }));
@@ -177,6 +221,8 @@ export default function App() {
         }
       }
     }
+    await syncInstalledOpenApis(nextSettings, selectedPlugins);
+    setPluginCommitting(false);
     setPluginSetupOpen(false);
     if (llmSetupNeeded) setSettingsOpen(true);
   }
@@ -230,8 +276,8 @@ export default function App() {
       <div className="sidebar-label">工作空间</div>
       <nav className="nav-list">
         <button className="active"><Sparkles size={17} /> 智能对话 <span className="live-dot" /></button>
-        <a href={serviceMap.debris?.dashboardUrl} target="_blank" rel="noreferrer"><Gauge size={17} /> 碎片监测 <ExternalLink size={13} /></a>
-        <a href={serviceMap.starmad?.dashboardUrl} target="_blank" rel="noreferrer"><Database size={17} /> 协同设计 <ExternalLink size={13} /></a>
+        <button onClick={() => void openDashboard(serviceMap.debris?.dashboardUrl)}><Gauge size={17} /> 碎片监测 <ExternalLink size={13} /></button>
+        <button onClick={() => void openDashboard(serviceMap.starmad?.dashboardUrl)}><Database size={17} /> 协同设计 <ExternalLink size={13} /></button>
       </nav>
       <div className="sidebar-label">对话历史</div>
       <div className="history-list">{[...chatState.sessions].sort((a, b) => b.updatedAt - a.updatedAt).map((session) => <div className={`history-item ${session.id === activeChatId ? "active" : ""}`} key={session.id}>
@@ -283,7 +329,7 @@ export default function App() {
 
     {pluginSetupOpen && <div className="modal-backdrop"><section className="settings-modal plugin-modal" role="dialog" aria-modal="true" aria-label="插件中心"><header><div><span className="eyebrow">OPTIONAL PLUGINS</span><h2>{hasCompletedPluginSetup() ? "插件中心" : "选择要启用的插件"}</h2><p>插件已随安装器离线内置；勾选后启用对应连接与安全工具。</p></div>{hasCompletedPluginSetup() && <button onClick={() => setPluginSetupOpen(false)} aria-label="关闭插件中心"><X /></button>}</header>
       <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = DEFAULT_TOOLS.filter((tool) => tool.serviceId === plugin.id).length; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><em>{toolCount} 个内置工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 注册、登录、注销、密码和管理员接口不会注册；其余接口在插件启用时默认打开。</p></div>
-      <footer><span>{selectedPlugins.length ? `已选择 ${selectedPlugins.length} 个插件` : "仅安装基础程序"}</span>{hasCompletedPluginSetup() && <button className="secondary" onClick={() => setPluginSetupOpen(false)}>取消</button>}<button className="primary" onClick={commitPluginSetup}>{hasCompletedPluginSetup() ? "应用选择" : "完成安装"}</button></footer>
+      <footer><span>{pluginCommitting ? "正在注册账号并同步全部接口…" : selectedPlugins.length ? `已选择 ${selectedPlugins.length} 个插件` : "仅安装基础程序"}</span>{hasCompletedPluginSetup() && <button className="secondary" onClick={() => setPluginSetupOpen(false)} disabled={pluginCommitting}>取消</button>}<button className="primary" onClick={commitPluginSetup} disabled={pluginCommitting}>{pluginCommitting ? "正在配置…" : hasCompletedPluginSetup() ? "应用选择" : "完成安装"}</button></footer>
     </section></div>}
 
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !llmSetupNeeded) setSettingsOpen(false); }}><section className="settings-modal" role="dialog" aria-modal="true" aria-label="设置"><header><div><span className="eyebrow">LOCAL CONFIGURATION</span><h2>{llmSetupNeeded ? "连接你的 LLM API" : "连接设置"}</h2><p>{llmSetupNeeded ? "完成模型连接后即可开始对话和调用工具。" : "地址与密钥由当前设备使用，不写入业务服务数据库。"}</p></div>{!llmSetupNeeded && <button onClick={() => setSettingsOpen(false)}><X /></button>}</header>

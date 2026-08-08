@@ -13,6 +13,8 @@
 - 对要求显式关闭推理模式的 Chat Completions 模型，工具请求遇到对应兼容性错误时会自动以 `reasoning_effort: none` 重试。
 - Windows API Key 与 Bearer Token 存入系统凭据管理器；普通设置和最多 50 条对话（每条最近 100 条消息）保存在本机。Web 版密钥只保存到当前标签页会话，不写入服务器日志或持久化存储。
 - Windows 端首次启用 STARMAD 插件时会注册一个唯一的 `orbit-copilot-*` 专用账号；随机密码仅存入 Windows 凭据管理器，之后每次启动自动登录并刷新 24 小时会话 Token。Web 版不会自动创建账号。
+- 首次完成插件选择和以后每次启动都会自动同步已选服务的 OpenAPI；用户保存有效的 LLM API 地址、模型名和 Key 后即可直接对话调用全部 88 个非敏感工具，无需手动点击“同步 OpenAPI”。
+- 侧栏“碎片监测”和“协同设计”通过原生 opener 交给 Windows 默认浏览器打开，不再依赖 WebView 内部的新窗口行为。
 - NSIS 当前用户安装器，无需管理员权限；同一应用 ID 的新版安装器可直接覆盖更新且保留设置和凭据。
 - 单一 Windows 安装器内置插件中心；首次启动可勾选“空间碎片监测”和“STARMAD-COMET”，以后可从侧栏调整。同步当前两套 OpenAPI 后共有 88 个非敏感工具默认启用，7 个敏感工具不会出现在界面或发送给模型。
 
@@ -70,7 +72,7 @@ curl http://127.0.0.1:18600/healthz
 
 ## Windows 安装与更新
 
-详见 [Windows 安装与更新](docs/Windows安装与更新.md)。用户只需要双击发布包中的 `setup.exe`：首次运行完成安装，后续直接运行新版 `setup.exe` 即可覆盖更新并保留配置与凭据，不需要另外运行 PowerShell、Node.js、Rust 或其他辅助程序。
+详见 [Windows 安装与更新](docs/Windows安装与更新.md)。用户只需要双击发布包中的 `setup.exe`：首次运行完成安装，后续直接运行新版 `setup.exe` 即可覆盖更新并保留配置与凭据，不需要另外运行 PowerShell、Node.js、Rust 或其他辅助程序。安装包内置 WebView2 离线运行时，因此全新的 Windows 10/11 电脑也不需要预装浏览器运行时或联网下载依赖。
 
 从源码构建时，执行 `scripts/build-windows.ps1`。脚本会构建 NSIS、安装并启动测试，安装器位于 `src-tauri/target/release/bundle/nsis/`；只构建不安装可追加 `-SkipInstallSmokeTest`。GitHub Actions 对每个 PR 和版本标签执行同一套 Windows 安装启动测试。
 
