@@ -53,7 +53,30 @@ export interface ChatMessage {
   content: string;
   createdAt: number;
   toolRuns?: ToolRun[];
+  exports?: SpreadsheetExport[];
   error?: boolean;
+}
+
+export type SpreadsheetCellType = "text" | "number" | "boolean" | "date";
+
+export interface SpreadsheetColumn {
+  key: string;
+  label: string;
+  type?: SpreadsheetCellType;
+}
+
+export interface SpreadsheetExport {
+  id: string;
+  filename: string;
+  title: string;
+  columns: SpreadsheetColumn[];
+  rows: Array<Record<string, string | number | boolean | null>>;
+  generatedAt: number;
+}
+
+export interface SpreadsheetSaveResult {
+  saved: boolean;
+  path?: string;
 }
 
 export interface ChatSession {

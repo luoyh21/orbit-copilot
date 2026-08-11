@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  Activity, Bot, Boxes, Check, ChevronLeft, ChevronRight, CircleAlert, Database, ExternalLink, Gauge,
+  Activity, BookOpen, Bot, Boxes, Check, ChevronRight, CircleAlert, Database, Download, ExternalLink, FileSpreadsheet, Gauge,
   KeyRound, LoaderCircle, Menu, MessageSquarePlus, Orbit, PanelRightClose, PanelRightOpen,
   RadioTower, RefreshCw, Rocket, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from "lucide-react";
@@ -12,7 +12,7 @@ import { applyPluginSelection, DEFAULT_TOOLS, PLUGIN_PACKS } from "./presets";
 import { ensureManagedStarmadSession } from "./starmad-auth";
 import { createChatSession, hasCompletedPluginSetup, hasConfiguredLlm, hydrateSecrets, loadChats, loadInstalledPlugins, loadSettings, loadTools, saveChats, saveInstalledPlugins, saveSettings, saveTools } from "./storage";
 import { testEndpoint } from "./transport";
-import type { ApiTool, AppSettings, ChatMessage, ServiceSettings, ToolRun } from "./types";
+import type { ApiTool, AppSettings, ChatMessage, ServiceSettings, SpreadsheetExport, SpreadsheetSaveResult, ToolRun } from "./types";
 
 const starterPrompts = [
   { icon: RadioTower, title: "文昌附近碎片", text: "查询文昌发射场 500 公里范围、未来 6 小时的空间目标。" },
@@ -20,9 +20,12 @@ const starterPrompts = [
   { icon: Orbit, title: "获取轨道根数", text: "查询 NORAD 25544 的最新 TLE，并概括关键轨道参数。" },
   { icon: Database, title: "设计计算能力", text: "STARMAD 当前有哪些计算插件？按专业方向整理。" },
 ];
-const TOOLS_PER_PAGE = 12;
-
 function uid() { return crypto.randomUUID(); }
+
+function apiPageUrl(service: ServiceSettings | undefined, path: string): string | undefined {
+  if (!service?.apiUrl) return undefined;
+  return `${service.apiUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
 
 function statusLabel(state: "idle" | "testing" | "ok" | "error", latency?: number) {
   if (state === "testing") return "检测中";
@@ -41,11 +44,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(() => hasCompletedPluginSetup() && !hasConfiguredLlm());
   const [settingsError, setSettingsError] = useState("");
   const [toolsOpen, setToolsOpen] = useState(true);
-  const [toolPage, setToolPage] = useState(0);
   const [mobileNav, setMobileNav] = useState(false);
   const [tools, setTools] = useState<ApiTool[]>(() => loadTools(DEFAULT_TOOLS));
   const [pluginSetupOpen, setPluginSetupOpen] = useState(() => !hasCompletedPluginSetup());
   const [pluginCommitting, setPluginCommitting] = useState(false);
+  const [pluginChanging, setPluginChanging] = useState<ServiceSettings["id"] | null>(null);
   const [selectedPlugins, setSelectedPlugins] = useState<ServiceSettings["id"][]>(() => loadInstalledPlugins());
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
@@ -55,12 +58,9 @@ export default function App() {
   const messages = activeChat?.messages || [];
   const activeChatId = activeChat?.id || "";
   const enabledCount = tools.filter((tool) => tool.enabled).length;
-  const toolPageCount = Math.max(1, Math.ceil(tools.length / TOOLS_PER_PAGE));
-  const visibleTools = tools.slice(toolPage * TOOLS_PER_PAGE, (toolPage + 1) * TOOLS_PER_PAGE);
 
   useEffect(() => { saveChats(chatState); }, [chatState]);
   useEffect(() => { saveTools(tools); }, [tools]);
-  useEffect(() => { setToolPage((page) => Math.min(page, toolPageCount - 1)); }, [toolPageCount]);
   useEffect(() => {
     if (starmadAuthStarted.current) return;
     starmadAuthStarted.current = true;
@@ -118,7 +118,7 @@ export default function App() {
     updateChatMessages(chatId, next); setInput(""); setBusy(true); setActiveRuns([]);
     try {
       const result = await runAgent(next, settings, tools, setActiveRuns);
-      updateChatMessages(chatId, (current) => [...current, { id: uid(), role: "assistant", content: result.content, toolRuns: result.toolRuns, createdAt: Date.now() }]);
+      updateChatMessages(chatId, (current) => [...current, { id: uid(), role: "assistant", content: result.content, toolRuns: result.toolRuns, exports: result.exports, createdAt: Date.now() }]);
     } catch (error) {
       updateChatMessages(chatId, (current) => [...current, { id: uid(), role: "assistant", content: error instanceof Error ? error.message : String(error), error: true, createdAt: Date.now() }]);
     } finally { setBusy(false); setActiveRuns([]); }
@@ -158,6 +158,33 @@ export default function App() {
 
   function togglePlugin(id: ServiceSettings["id"]) {
     setSelectedPlugins((old) => old.includes(id) ? old.filter((item) => item !== id) : [...old, id]);
+  }
+
+  async function toggleInstalledPlugin(id: ServiceSettings["id"]) {
+    if (pluginChanging || pluginCommitting) return;
+    const nextPlugins = selectedPlugins.includes(id)
+      ? selectedPlugins.filter((item) => item !== id)
+      : [...selectedPlugins, id];
+    setPluginChanging(id);
+    setSelectedPlugins(nextPlugins);
+    saveInstalledPlugins(nextPlugins);
+    setTools((old) => applyPluginSelection(old, nextPlugins));
+    let nextSettings = settings;
+    if (nextPlugins.includes("starmad") && id === "starmad") {
+      const service = settings.services.find((item) => item.id === "starmad");
+      if (service) {
+        try {
+          const session = await ensureManagedStarmadSession(service);
+          nextSettings = { ...settings, services: settings.services.map((item) => item.id === "starmad" ? session.service : item) };
+          setSettings(nextSettings);
+          setDraft(structuredClone(nextSettings));
+        } catch {
+          setStatus((old) => ({ ...old, starmad: { state: "error" } }));
+        }
+      }
+    }
+    if (nextPlugins.includes(id)) await syncInstalledOpenApis(nextSettings, nextPlugins);
+    setPluginChanging(null);
   }
 
   async function openDashboard(url: string | undefined) {
@@ -310,6 +337,7 @@ export default function App() {
             <div className="message-body"><div className="message-meta">{message.role === "assistant" ? "轨道智枢" : "你"}<time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div>
               {message.role === "assistant" ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : <p>{message.content}</p>}
               {!!message.toolRuns?.length && <ToolRuns runs={message.toolRuns} />}
+              {!!message.exports?.length && <SpreadsheetExports exports={message.exports} />}
             </div>
           </article>)}
           {busy && <article className="message assistant"><div className="avatar"><Bot size={18} /></div><div className="message-body"><div className="message-meta">轨道智枢 <span className="thinking">正在编排任务</span></div>{activeRuns.length ? <ToolRuns runs={activeRuns} /> : <div className="typing"><i /><i /><i /></div>}</div></article>}
@@ -320,15 +348,20 @@ export default function App() {
       <footer className="composer-wrap"><div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="询问监测数据、发射风险或协同设计…" rows={1} disabled={busy} /><button onClick={() => submit()} disabled={!input.trim() || busy} aria-label="发送">{busy ? <LoaderCircle className="spin" /> : <Send />}</button></div><div className="composer-foot"><span><Wrench size={13} /> {enabledCount} 个工具已启用</span><span>Enter 发送 · Shift Enter 换行</span></div></footer>
     </main>
 
-    {toolsOpen && <aside className="context-panel"><div className="panel-head"><div><span className="eyebrow">CONNECTED SYSTEMS</span><h3>能力与连接</h3></div><button onClick={() => setToolsOpen(false)} aria-label="收起右侧工具栏"><PanelRightClose /></button></div>
-      <div className="service-stack">{settings.services.map((service) => { const info = status[service.id] || { state: "idle" as const }; const sync = status[`${service.id}-sync`] || { state: "idle" as const }; return <div className="service-card" key={service.id}><div className="service-title"><span className={`service-icon ${service.id}`}><Activity /></span><div><strong>{service.name}</strong><small>{service.id === "debris" ? "8502 REST API" : "18502 REST API"}</small></div><span className={`status-dot ${info.state}`} /></div><div className="service-url">{service.apiUrl.replace(/^https?:\/\//, "")}</div><div className="service-actions"><button onClick={() => testService(service)} disabled={info.state === "testing"}>{info.state === "ok" && <Check size={14} />}{statusLabel(info.state, info.latency)}</button><button onClick={() => syncOpenApi(service)} disabled={sync.state === "testing"}><RefreshCw className={sync.state === "testing" ? "spin" : ""} size={13} />{sync.state === "ok" ? `发现 ${sync.latency} 项` : sync.state === "error" ? "同步失败" : "同步 OpenAPI"}</button></div></div>; })}</div>
-      <div className="tool-heading"><span>工具注册表</span><em>{enabledCount}/{tools.length}</em></div>
-      <div className="tool-list">{visibleTools.map((tool) => <label key={tool.id}><span><strong>{tool.title}</strong><small>{tool.method} · {tool.serviceId === "debris" ? "碎片监测" : "协同设计"}</small></span><input type="checkbox" checked={tool.enabled} onChange={() => setTools((old) => old.map((item) => item.id === tool.id ? { ...item, enabled: !item.enabled } : item))} /><i /></label>)}</div>
-      <div className="tool-pagination"><button onClick={() => setToolPage((page) => Math.max(0, page - 1))} disabled={toolPage === 0} aria-label="上一页"><ChevronLeft /></button><span>第 {toolPage + 1} / {toolPageCount} 页</span><button onClick={() => setToolPage((page) => Math.min(toolPageCount - 1, page + 1))} disabled={toolPage >= toolPageCount - 1} aria-label="下一页"><ChevronRight /></button></div>
+    {toolsOpen && <aside className="context-panel"><div className="panel-head"><div><span className="eyebrow">CONNECTED SYSTEMS</span><h3>插件与连接</h3></div><button onClick={() => setToolsOpen(false)} aria-label="收起右侧工具栏"><PanelRightClose /></button></div>
+      <p className="panel-intro">只需选择两个能力插件；启用后会自动开放其中全部非敏感接口。</p>
+      <div className="plugin-control-list">{PLUGIN_PACKS.map((plugin) => { const service = serviceMap[plugin.id]; if (!service) return null; const info = status[service.id] || { state: "idle" as const }; const sync = status[`${service.id}-sync`] || { state: "idle" as const }; const checked = selectedPlugins.includes(plugin.id); const count = tools.filter((tool) => tool.serviceId === plugin.id).length; return <section className={`service-card plugin-control ${checked ? "enabled" : ""}`} key={service.id}>
+        <div className="service-title"><span className={`service-icon ${service.id}`}><Activity /></span><div><strong>{plugin.name}</strong><small>{count} 项非敏感能力</small></div><label className="master-switch" title={checked ? "停用插件" : "启用插件"}><input type="checkbox" checked={checked} disabled={pluginChanging !== null} onChange={() => void toggleInstalledPlugin(plugin.id)} /><i /></label></div>
+        <p className="plugin-purpose">{plugin.description}</p>
+        <div className="service-url">{service.apiUrl.replace(/^https?:\/\//, "")}</div>
+        <div className="service-docs"><button onClick={() => void openDashboard(apiPageUrl(service, plugin.id === "debris" ? "/api/redoc" : "/api/docs"))}><BookOpen />接口说明<ExternalLink /></button>{plugin.id === "debris" && <button onClick={() => void openDashboard(apiPageUrl(service, "/docs/api/database"))}><Database />数据库说明<ExternalLink /></button>}</div>
+        <div className="service-actions"><button onClick={() => testService(service)} disabled={info.state === "testing"}>{info.state === "ok" && <Check size={14} />}{statusLabel(info.state, info.latency)}</button><button onClick={() => syncOpenApi(service)} disabled={!checked || sync.state === "testing"}><RefreshCw className={sync.state === "testing" ? "spin" : ""} size={13} />{sync.state === "ok" ? `发现 ${sync.latency} 项` : sync.state === "error" ? "同步失败" : "同步接口"}</button></div>
+      </section>; })}</div>
+      <div className="panel-tool-summary"><ShieldCheck /><span>已启用 {enabledCount}/{tools.length} 项安全工具</span></div>
     </aside>}
 
     {pluginSetupOpen && <div className="modal-backdrop"><section className="settings-modal plugin-modal" role="dialog" aria-modal="true" aria-label="插件中心"><header><div><span className="eyebrow">OPTIONAL PLUGINS</span><h2>{hasCompletedPluginSetup() ? "插件中心" : "选择要启用的插件"}</h2><p>插件已随安装器离线内置；勾选后启用对应连接与安全工具。</p></div>{hasCompletedPluginSetup() && <button onClick={() => setPluginSetupOpen(false)} aria-label="关闭插件中心"><X /></button>}</header>
-      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = DEFAULT_TOOLS.filter((tool) => tool.serviceId === plugin.id).length; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><em>{toolCount} 个内置工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 注册、登录、注销、密码和管理员接口不会注册；其余接口在插件启用时默认打开。</p></div>
+      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = tools.filter((tool) => tool.serviceId === plugin.id).length; const service = serviceMap[plugin.id]; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><div className="plugin-doc-links"><button type="button" onClick={(event) => { event.preventDefault(); void openDashboard(apiPageUrl(service, plugin.id === "debris" ? "/api/redoc" : "/api/docs")); }}><BookOpen />接口说明</button>{plugin.id === "debris" && <button type="button" onClick={(event) => { event.preventDefault(); void openDashboard(apiPageUrl(service, "/docs/api/database")); }}><Database />数据库说明</button>}</div><em>{toolCount} 个安全工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 注册、登录、注销、密码和管理员接口不会注册；其余接口在插件启用时默认打开。</p></div>
       <footer><span>{pluginCommitting ? "正在注册账号并同步全部接口…" : selectedPlugins.length ? `已选择 ${selectedPlugins.length} 个插件` : "仅安装基础程序"}</span>{hasCompletedPluginSetup() && <button className="secondary" onClick={() => setPluginSetupOpen(false)} disabled={pluginCommitting}>取消</button>}<button className="primary" onClick={commitPluginSetup} disabled={pluginCommitting}>{pluginCommitting ? "正在配置…" : hasCompletedPluginSetup() ? "应用选择" : "完成安装"}</button></footer>
     </section></div>}
 
@@ -343,4 +376,22 @@ export default function App() {
 
 function ToolRuns({ runs }: { runs: ToolRun[] }) {
   return <div className="tool-runs">{runs.map((run) => <div key={run.id} className={`tool-run ${run.state}`}><span>{run.state === "running" ? <LoaderCircle className="spin" /> : run.state === "success" ? <Check /> : <CircleAlert />}</span><div><strong>{run.title}</strong><small>{run.state === "running" ? "正在调用…" : run.state === "success" ? `已完成 · ${run.durationMs} ms` : "调用失败"}</small></div></div>)}</div>;
+}
+
+function SpreadsheetExports({ exports }: { exports: SpreadsheetExport[] }) {
+  const [states, setStates] = useState<Record<string, { busy?: boolean; path?: string; error?: string }>>({});
+  async function save(exportItem: SpreadsheetExport) {
+    setStates((old) => ({ ...old, [exportItem.id]: { busy: true } }));
+    try {
+      if (!("__TAURI_INTERNALS__" in window)) throw new Error("请在 Windows 安装版中使用 XLSX 另存为功能。");
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<SpreadsheetSaveResult>("save_xlsx", { export: exportItem });
+      setStates((old) => ({ ...old, [exportItem.id]: result.saved ? { path: result.path } : {} }));
+    } catch (error) {
+      setStates((old) => ({ ...old, [exportItem.id]: { error: error instanceof Error ? error.message : String(error) } }));
+    }
+  }
+  return <div className="spreadsheet-exports">{exports.map((item) => { const state = states[item.id] || {}; return <div className="spreadsheet-export" key={item.id}>
+    <span className="spreadsheet-icon"><FileSpreadsheet /></span><div><strong>{item.filename}</strong><small>{item.rows.length} 行 · {item.columns.length} 列 · Excel 工作簿</small>{state.path && <em title={state.path}>已保存：{state.path}</em>}{state.error && <em className="export-error">{state.error}</em>}</div><button onClick={() => void save(item)} disabled={state.busy}>{state.busy ? <LoaderCircle className="spin" /> : <Download />}{state.busy ? "正在生成" : "另存为 XLSX"}</button>
+  </div>; })}</div>;
 }
