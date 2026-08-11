@@ -3,8 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   Activity, BookOpen, Bot, Boxes, Check, ChevronRight, CircleAlert, Database, Download, ExternalLink, FileSpreadsheet, Gauge,
-  KeyRound, LoaderCircle, Menu, MessageSquarePlus, Orbit, PanelRightClose, PanelRightOpen,
-  RadioTower, RefreshCw, Rocket, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
+  KeyRound, LoaderCircle, Menu, MessageSquarePlus, Orbit, PanelRightClose, PanelRightOpen, Pencil,
+  RadioTower, RefreshCw, Repeat2, Rocket, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from "lucide-react";
 import { runAgent } from "./agent";
 import { discoverOpenApi, mergeDiscoveredTools } from "./openapi";
@@ -19,6 +19,7 @@ const starterPrompts = [
   { icon: Rocket, title: "发射风险评估", text: "评估 CZ-5B 从文昌发射的碰撞风险，使用真实目标，不注入演示威胁。" },
   { icon: Orbit, title: "获取轨道根数", text: "查询 NORAD 25544 的最新 TLE，并概括关键轨道参数。" },
   { icon: Database, title: "设计计算能力", text: "STARMAD 当前有哪些计算插件？按专业方向整理。" },
+  { icon: FileSpreadsheet, title: "导出太阳同步卫星", text: "查一下600-800㎞高度，太阳同步轨道的卫星列表，请导出一个xlsx给我" },
 ];
 function uid() { return crypto.randomUUID(); }
 
@@ -40,6 +41,7 @@ export default function App() {
   const [chatState, setChatState] = useState(() => loadChats());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [llmSetupNeeded, setLlmSetupNeeded] = useState(() => !hasConfiguredLlm());
   const [settingsOpen, setSettingsOpen] = useState(() => hasCompletedPluginSetup() && !hasConfiguredLlm());
   const [settingsError, setSettingsError] = useState("");
@@ -53,6 +55,7 @@ export default function App() {
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
   const chatAreaRef = useRef<HTMLElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const starmadAuthStarted = useRef(false);
   const activeChat = chatState.sessions.find((session) => session.id === chatState.activeId) || chatState.sessions[0];
   const messages = activeChat?.messages || [];
@@ -101,7 +104,7 @@ export default function App() {
         const firstUserMessage = nextMessages.find((message) => message.role === "user")?.content.trim();
         return {
           ...session,
-          title: session.title === "新对话" && firstUserMessage ? firstUserMessage.slice(0, 24) : session.title,
+          title: firstUserMessage ? firstUserMessage.slice(0, 24) : "新对话",
           messages: nextMessages,
           updatedAt: Date.now(),
         };
@@ -109,13 +112,14 @@ export default function App() {
     }));
   }
 
-  async function submit(text = input) {
+  async function submit(text = input, replaceMessageId = editingMessageId) {
     const value = text.trim();
     if (!value || busy) return;
     const chatId = activeChatId;
     const user: ChatMessage = { id: uid(), role: "user", content: value, createdAt: Date.now() };
-    const next = [...messages, user];
-    updateChatMessages(chatId, next); setInput(""); setBusy(true); setActiveRuns([]);
+    const replaceIndex = replaceMessageId ? messages.findIndex((message) => message.id === replaceMessageId && message.role === "user") : -1;
+    const next = [...(replaceIndex >= 0 ? messages.slice(0, replaceIndex) : messages), user];
+    updateChatMessages(chatId, next); setInput(""); setEditingMessageId(null); setBusy(true); setActiveRuns([]);
     try {
       const result = await runAgent(next, settings, tools, setActiveRuns);
       updateChatMessages(chatId, (current) => [...current, { id: uid(), role: "assistant", content: result.content, toolRuns: result.toolRuns, exports: result.exports, createdAt: Date.now() }]);
@@ -124,17 +128,38 @@ export default function App() {
     } finally { setBusy(false); setActiveRuns([]); }
   }
 
+  function editMessage(message: ChatMessage) {
+    if (busy || message.role !== "user") return;
+    setEditingMessageId(message.id);
+    setInput(message.content);
+    requestAnimationFrame(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(message.content.length, message.content.length);
+    });
+  }
+
+  function resendMessage(message: ChatMessage) {
+    if (busy || message.role !== "user") return;
+    void submit(message.content, message.id);
+  }
+
+  function cancelEditing() {
+    setEditingMessageId(null);
+    setInput("");
+    composerRef.current?.focus();
+  }
+
   function newChat() {
     if (busy) return;
     const session = createChatSession();
     setChatState((old) => ({ sessions: [session, ...old.sessions], activeId: session.id }));
-    setInput(""); setActiveRuns([]); setMobileNav(false);
+    setInput(""); setEditingMessageId(null); setActiveRuns([]); setMobileNav(false);
   }
 
   function switchChat(id: string) {
     if (busy || id === activeChatId) return;
     setChatState((old) => ({ ...old, activeId: id }));
-    setInput(""); setActiveRuns([]); setMobileNav(false);
+    setInput(""); setEditingMessageId(null); setActiveRuns([]); setMobileNav(false);
   }
 
   function deleteChat(id: string) {
@@ -338,6 +363,7 @@ export default function App() {
               {message.role === "assistant" ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : <p>{message.content}</p>}
               {!!message.toolRuns?.length && <ToolRuns runs={message.toolRuns} />}
               {!!message.exports?.length && <SpreadsheetExports exports={message.exports} />}
+              {message.role === "user" && <div className="message-actions"><button onClick={() => editMessage(message)} disabled={busy}><Pencil />编辑</button><button onClick={() => resendMessage(message)} disabled={busy} title="从此消息重新生成后续内容"><Repeat2 />重新发送</button></div>}
             </div>
           </article>)}
           {busy && <article className="message assistant"><div className="avatar"><Bot size={18} /></div><div className="message-body"><div className="message-meta">轨道智枢 <span className="thinking">正在编排任务</span></div>{activeRuns.length ? <ToolRuns runs={activeRuns} /> : <div className="typing"><i /><i /><i /></div>}</div></article>}
@@ -345,7 +371,7 @@ export default function App() {
         </div>}
       </section>
 
-      <footer className="composer-wrap"><div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="询问监测数据、发射风险或协同设计…" rows={1} disabled={busy} /><button onClick={() => submit()} disabled={!input.trim() || busy} aria-label="发送">{busy ? <LoaderCircle className="spin" /> : <Send />}</button></div><div className="composer-foot"><span><Wrench size={13} /> {enabledCount} 个工具已启用</span><span>Enter 发送 · Shift Enter 换行</span></div></footer>
+      <footer className="composer-wrap">{editingMessageId && <div className="edit-banner"><Pencil /><span>正在编辑已发送消息；发送后将从这里重新生成后续对话。</span><button onClick={cancelEditing}><X />取消</button></div>}<div className="composer"><textarea ref={composerRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="询问监测数据、发射风险或协同设计…" rows={1} disabled={busy} /><button onClick={() => submit()} disabled={!input.trim() || busy} aria-label={editingMessageId ? "发送编辑后的消息" : "发送"}>{busy ? <LoaderCircle className="spin" /> : <Send />}</button></div><div className="composer-foot"><span><Wrench size={13} /> {enabledCount} 个工具已启用</span><span>Enter 发送 · Shift Enter 换行</span></div></footer>
     </main>
 
     {toolsOpen && <aside className="context-panel"><div className="panel-head"><div><span className="eyebrow">CONNECTED SYSTEMS</span><h3>插件与连接</h3></div><button onClick={() => setToolsOpen(false)} aria-label="收起右侧工具栏"><PanelRightClose /></button></div>

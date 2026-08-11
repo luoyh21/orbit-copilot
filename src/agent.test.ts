@@ -64,7 +64,27 @@ describe("spreadsheet export preparation", () => {
   it("rejects a missing source instead of inventing spreadsheet rows", () => {
     expect(() => createSpreadsheetExport({
       filename: "missing.xlsx", title: "missing", source_tool_name: "not_called",
-    }, new Map())).toThrow("找不到已成功调用的来源工具");
+    }, new Map())).toThrow("没有可用于导出的成功查询结果");
+  });
+
+  it("binds a mismatched model tool name to the latest successful query result", () => {
+    const sources = new Map<string, unknown>([
+      ["catalog_search_api_v1_catalog_search_post", { results: [{ NORAD: 25544, 名称: "ISS" }] }],
+    ]);
+    const output = createSpreadsheetExport({
+      filename: "fallback.xlsx", title: "fallback", source_tool_name: "catalog_search",
+      data_path: "data.results",
+    }, sources);
+    expect(output.rows).toEqual([{ NORAD: 25544, 名称: "ISS" }]);
+  });
+
+  it("skips a newer non-tabular tool result when auto-binding", () => {
+    const sources = new Map<string, unknown>([
+      ["catalog_search", { results: [{ NORAD: 25544 }] }],
+      ["health_check", { status: "ok" }],
+    ]);
+    const output = createSpreadsheetExport({ filename: "latest.xlsx", title: "latest" }, sources);
+    expect(output.rows).toEqual([{ NORAD: 25544 }]);
   });
 
   it("keeps the API field order when the model redundantly lists every column", () => {

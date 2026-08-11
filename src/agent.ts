@@ -71,7 +71,7 @@ const exportToolDefinition = {
       properties: {
         filename: { type: "string", description: "建议的 .xlsx 文件名" },
         title: { type: "string", description: "工作簿标题" },
-        source_tool_name: { type: "string", description: "本轮提供表格数据的已成功工具名称" },
+        source_tool_name: { type: "string", description: "可选：本轮提供表格数据的已成功工具名称；省略或名称不精确时会自动绑定最近一次含列表的成功查询" },
         data_path: { type: "string", description: "结果中数组的点分路径，例如 results；若结果本身是数组则留空" },
         columns: {
           type: "array",
@@ -201,10 +201,30 @@ export function createSpreadsheetExport(
   rawArgs: Record<string, unknown>,
   sourceResults: Map<string, unknown>,
 ): SpreadsheetExport {
-  const sourceName = typeof rawArgs.source_tool_name === "string" ? rawArgs.source_tool_name : "";
-  const source = sourceName ? sourceResults.get(sourceName) : undefined;
-  if (sourceName && source === undefined) throw new Error(`找不到已成功调用的来源工具: ${sourceName}`);
-  const candidate = sourceName ? resolveExportRows(source, String(rawArgs.data_path || "results")) : rawArgs.rows;
+  const requestedSourceName = typeof rawArgs.source_tool_name === "string" ? rawArgs.source_tool_name.trim() : "";
+  const normalizeName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  let selectedSource: [string, unknown] | undefined;
+  if (requestedSourceName) {
+    const exact = sourceResults.get(requestedSourceName);
+    if (exact !== undefined) selectedSource = [requestedSourceName, exact];
+    if (!selectedSource) {
+      const requestedNormalized = normalizeName(requestedSourceName);
+      selectedSource = [...sourceResults.entries()].reverse().find(([name]) => {
+        const normalized = normalizeName(name);
+        return normalized === requestedNormalized || normalized.includes(requestedNormalized) || requestedNormalized.includes(normalized);
+      });
+    }
+  }
+  if (selectedSource && !Array.isArray(resolveExportRows(selectedSource[1], "results"))) selectedSource = undefined;
+  if (!selectedSource) {
+    selectedSource = [...sourceResults.entries()].reverse().find(([, value]) => {
+      const candidate = resolveExportRows(value, "results");
+      return Array.isArray(candidate);
+    });
+  }
+  const source = selectedSource?.[1];
+  const candidate = selectedSource ? resolveExportRows(source, String(rawArgs.data_path || "results")) : rawArgs.rows;
+  if (requestedSourceName && !selectedSource && !Array.isArray(rawArgs.rows)) throw new Error("没有可用于导出的成功查询结果");
   if (!Array.isArray(candidate)) throw new Error("导出数据不是数组；请检查 source_tool_name 与 data_path");
   if (!candidate.length) throw new Error("查询结果为空，没有可导出的行");
   if (candidate.length > 10_000) throw new Error("单次最多导出 10,000 行，请缩小查询范围");
@@ -223,7 +243,7 @@ export function createSpreadsheetExport(
     .filter((column) => column.key && column.label)
     .slice(0, 50);
   const inferredColumns = inferColumns(objectRows);
-  const finalColumns = sourceName && columns.length >= inferredColumns.length
+  const finalColumns = selectedSource && columns.length >= inferredColumns.length
     ? inferredColumns
     : columns.length ? columns : inferredColumns;
   if (!finalColumns.length) throw new Error("没有可导出的列");
@@ -264,7 +284,7 @@ export async function runAgent(
 ): Promise<{ content: string; toolRuns: ToolRun[]; exports: SpreadsheetExport[] }> {
   const enabled = tools.filter((tool) => tool.enabled);
   const messages: AgentMessage[] = [
-    { role: "system", content: `${settings.systemPrompt}\n\n目录检索中，用户说“卫星”时默认指对象类型 PAYLOAD，除非用户明确要求包含碎片、火箭体或全部空间目标。\n当用户要求导出、Excel 或 xlsx 时：先调用业务查询工具取得真实数据，再调用 export_xlsx。export_xlsx 应通过 source_tool_name 引用刚才成功的业务工具，并用 data_path 指向结果数组（常见为 results）；除非数据来自用户明确提供的内容，否则不要手写或猜测 rows。较大的接口结果在对话上下文中可能只展示前 20 行，但 export_xlsx 仍会读取该次调用在内存中的完整结果。` },
+    { role: "system", content: `${settings.systemPrompt}\n\n目录检索中，用户说“卫星”时默认指对象类型 PAYLOAD，除非用户明确要求包含碎片、火箭体或全部空间目标。\n当用户要求导出、Excel 或 xlsx 时：先调用业务查询工具取得真实数据，再调用 export_xlsx。export_xlsx 可省略 source_tool_name；应用会自动绑定本轮最近一次包含列表的成功查询。若填写 source_tool_name，可使用刚才的业务工具名称，并用 data_path 指向结果数组（常见为 results）；除非数据来自用户明确提供的内容，否则不要手写或猜测 rows。较大的接口结果在对话上下文中可能只展示前 20 行，但 export_xlsx 仍会读取该次调用在内存中的完整结果。` },
     ...history.slice(-20).map((item) => ({ role: item.role, content: item.content } as AgentMessage)),
   ];
   const runs: ToolRun[] = [];
@@ -294,6 +314,7 @@ export async function runAgent(
           const response = await request(buildToolRequest(tool, args, settings));
           content = JSON.stringify({ status: response.status, data: compactToolResultForModel(response.body) });
           if (response.status < 200 || response.status >= 300) throw new Error(content);
+          sourceResults.delete(tool.name);
           sourceResults.set(tool.name, response.body);
         }
         run.state = "success";

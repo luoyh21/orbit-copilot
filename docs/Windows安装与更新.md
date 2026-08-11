@@ -13,7 +13,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.5_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.3.6_x64-setup.exe
 ```
 
 若 Windows 安全策略会短暂锁定源码目录中新生成的 Rust 辅助程序，可将 Cargo 构建产物放到本机应用数据目录；构建脚本会自动从该目录查找安装器：
