@@ -1,7 +1,7 @@
 {
   "name": "orbit-copilot",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.4.0",
   "description": "Offline-first AI copilot for debris monitoring and STARMAD-COMET",
   "type": "module",
   "scripts": {
@@ -15,6 +15,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",

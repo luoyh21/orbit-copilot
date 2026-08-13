@@ -6,6 +6,9 @@ use reqwest::{Client, Method};
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, XlsxError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::{Emitter, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 const CREDENTIAL_SERVICE: &str = "com.starmad.orbitcopilot";
 
@@ -274,15 +277,82 @@ fn load_secret(key: String) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let show = MenuItem::with_id(app, "show", "打开轨道智枢", true, None::<&str>)?;
+            let news = MenuItem::with_id(app, "news", "查看今日航天新闻", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &news, &quit])?;
+            let icon = app.default_window_icon().cloned();
+            let mut tray = TrayIconBuilder::with_id("orbit-copilot")
+                .tooltip("轨道智枢 · Orbit Copilot")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_window(app),
+                    "news" => {
+                        show_window(app);
+                        let _ = app.emit("open-news", serde_json::json!({}));
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = icon {
+                tray = tray.icon(icon);
+            }
+            tray.build(app)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let close_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    }
+                });
+                if std::env::args().any(|argument| argument == "--hidden") {
+                    let _ = window.hide();
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             native_request,
             save_secret,
             load_secret,
-            save_xlsx
+            save_xlsx,
+            show_main_window
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Orbit Copilot");
+}
+
+fn show_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    show_window(&app);
 }
 
 #[cfg(test)]

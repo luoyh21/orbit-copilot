@@ -21,6 +21,12 @@ export const PLUGIN_PACKS: PluginPack[] = [
     description: "连接协同设计服务，提供工程计算与任务协作能力。",
     features: ["能力与设计任务", "计算插件与公式", "协同进程"],
   },
+  {
+    id: "news",
+    name: "航天速递新闻",
+    description: "直接读取每日航天新闻、图片、概要和全文，不依赖 GPT。",
+    features: ["上午/下午刊", "近 31 天历史", "概要与全文 API"],
+  },
 ];
 
 export const DEFAULT_SYSTEM_PROMPT = `你是“轨道智枢”，服务于空间碎片监测与航天器协同设计。
@@ -53,8 +59,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
       authToken: "",
       allowInvalidCerts: false,
     },
+    {
+      id: "news",
+      name: "航天速递新闻",
+      apiUrl: "https://links.he-ting.com/news-api",
+      dashboardUrl: "https://links.he-ting.com/news-api/",
+      authToken: "",
+      allowInvalidCerts: false,
+    },
   ],
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  desktop: {
+    autostart: false,
+    newsNotifications: true,
+  },
 };
 
 const object = (properties: ApiTool["inputSchema"]["properties"], required: string[] = []) => ({
@@ -113,6 +131,20 @@ export const DEFAULT_TOOLS: ApiTool[] = [
   {
     id: "starmad-processes", name: "list_collaboration_processes", title: "协同进程", serviceId: "starmad", method: "GET", path: "/api/processes", enabled: true,
     description: "列出当前账号可访问的 STARMAD 协同进程，需要在设置中填写登录令牌。", inputSchema: object({}),
+  },
+  {
+    id: "news-daily", name: "get_daily_space_news", title: "获取每日航天新闻", serviceId: "news", method: "GET", path: "/daily", enabled: true,
+    description: "按日期和上午/下午刊获取航天新闻概要，每条含图片、概要、网页和原始网址；不调用 GPT。",
+    queryParams: ["date", "edition"], inputSchema: object({ date: { type: "string", description: "YYYY-MM-DD，限近 31 天；默认今天" }, edition: { type: "string", enum: ["morning", "evening"], default: "morning" } }),
+  },
+  {
+    id: "news-item", name: "get_space_news_full_text", title: "获取航天新闻全文", serviceId: "news", method: "GET", path: "/item/{item_id}", enabled: true,
+    description: "按新闻 ID 获取中文全文、英文全文、概要、图片与原始网址；不调用 GPT。",
+    queryParams: ["date", "edition"], inputSchema: object({ item_id: { type: "string", description: "新闻条目 ID" }, date: { type: "string", description: "可选 YYYY-MM-DD" }, edition: { type: "string", enum: ["morning", "evening"] } }, ["item_id"]),
+  },
+  {
+    id: "news-dates", name: "list_space_news_dates", title: "可用新闻日期", serviceId: "news", method: "GET", path: "/dates", enabled: true,
+    description: "列出近 31 天已有上午刊或下午刊的日期。", inputSchema: object({}),
   },
 ];
 

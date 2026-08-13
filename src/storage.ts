@@ -8,6 +8,7 @@ const CHATS_KEY = "orbit-copilot.chats.v2";
 const TOOLS_KEY = "orbit-copilot.tools.v1";
 const PLUGINS_KEY = "orbit-copilot.plugins.v1";
 const PLUGIN_SETUP_KEY = "orbit-copilot.plugin-setup.v1";
+const NEWS_PLUGIN_MIGRATION_KEY = "orbit-copilot.news-plugin.v1";
 
 export function loadSettings(): AppSettings {
   try {
@@ -17,6 +18,7 @@ export function loadSettings(): AppSettings {
       ...DEFAULT_SETTINGS,
       ...saved,
       llm: { ...DEFAULT_SETTINGS.llm, ...saved.llm },
+      desktop: { ...DEFAULT_SETTINGS.desktop, ...saved.desktop },
       services: DEFAULT_SETTINGS.services.map((fallback) => ({
         ...fallback,
         ...(saved.services?.find((item: { id: string }) => item.id === fallback.id) || {}),
@@ -137,9 +139,15 @@ export function hasCompletedPluginSetup(): boolean {
 export function loadInstalledPlugins(): ServiceSettings["id"][] {
   try {
     const saved = JSON.parse(localStorage.getItem(PLUGINS_KEY) || "null");
-    return Array.isArray(saved) ? saved.filter((id) => id === "debris" || id === "starmad") : ["debris", "starmad"];
+    if (!Array.isArray(saved)) return ["debris", "starmad", "news"];
+    const selected = saved.filter((id) => id === "debris" || id === "starmad" || id === "news") as ServiceSettings["id"][];
+    if (!localStorage.getItem(NEWS_PLUGIN_MIGRATION_KEY)) {
+      localStorage.setItem(NEWS_PLUGIN_MIGRATION_KEY, "complete");
+      if (!selected.includes("news")) selected.push("news");
+    }
+    return selected;
   } catch {
-    return ["debris", "starmad"];
+    return ["debris", "starmad", "news"];
   }
 }
 

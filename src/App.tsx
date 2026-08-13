@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  Activity, BookOpen, Bot, Boxes, Check, ChevronRight, CircleAlert, Database, Download, ExternalLink, FileSpreadsheet, Gauge,
+  Activity, Bell, BookOpen, Bot, Boxes, Check, ChevronRight, CircleAlert, Database, Download, ExternalLink, FileSpreadsheet, Gauge,
   KeyRound, LoaderCircle, Menu, MessageSquarePlus, Orbit, PanelRightClose, PanelRightOpen, Pencil,
-  RadioTower, RefreshCw, Repeat2, Rocket, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
+  Newspaper, RadioTower, RefreshCw, Repeat2, Rocket, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from "lucide-react";
 import { runAgent } from "./agent";
 import { discoverOpenApi, mergeDiscoveredTools } from "./openapi";
@@ -12,7 +12,9 @@ import { applyPluginSelection, DEFAULT_TOOLS, PLUGIN_PACKS } from "./presets";
 import { ensureManagedStarmadSession } from "./starmad-auth";
 import { createChatSession, hasCompletedPluginSetup, hasConfiguredLlm, hydrateSecrets, loadChats, loadInstalledPlugins, loadSettings, loadTools, saveChats, saveInstalledPlugins, saveSettings, saveTools } from "./storage";
 import { testEndpoint } from "./transport";
-import type { ApiTool, AppSettings, ChatMessage, ServiceSettings, SpreadsheetExport, SpreadsheetSaveResult, ToolRun } from "./types";
+import { NewsWorkspace } from "./NewsWorkspace";
+import { configureAutostart, sendNewsNotification, setupNewsNotificationScheduler } from "./news-notifications";
+import type { ApiTool, AppSettings, ChatMessage, NewsEdition, ServiceSettings, SpreadsheetExport, SpreadsheetSaveResult, ToolRun } from "./types";
 
 const starterPrompts = [
   { icon: RadioTower, title: "文昌附近碎片", text: "查询文昌发射场 500 公里范围、未来 6 小时的空间目标。" },
@@ -42,6 +44,8 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<"chat" | "news">("chat");
+  const [newsTarget, setNewsTarget] = useState<{ date: string; edition: NewsEdition; nonce: number }>();
   const [llmSetupNeeded, setLlmSetupNeeded] = useState(() => !hasConfiguredLlm());
   const [settingsOpen, setSettingsOpen] = useState(() => hasCompletedPluginSetup() && !hasConfiguredLlm());
   const [settingsError, setSettingsError] = useState("");
@@ -54,6 +58,7 @@ export default function App() {
   const [selectedPlugins, setSelectedPlugins] = useState<ServiceSettings["id"][]>(() => loadInstalledPlugins());
   const [activeRuns, setActiveRuns] = useState<ToolRun[]>([]);
   const [status, setStatus] = useState<Record<string, { state: "idle" | "testing" | "ok" | "error"; latency?: number }>>({});
+  const [notificationTest, setNotificationTest] = useState<"idle" | "testing" | "ok" | "error">("idle");
   const chatAreaRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const starmadAuthStarted = useRef(false);
@@ -94,6 +99,29 @@ export default function App() {
   }, [messages, activeRuns]);
 
   const serviceMap = useMemo(() => Object.fromEntries(settings.services.map((item) => [item.id, item])), [settings.services]);
+
+  function openNews(date?: string, edition?: NewsEdition) {
+    const now = new Date();
+    const local = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    setNewsTarget({ date: date || local, edition: edition || (now.getHours() < 16 ? "morning" : "evening"), nonce: Date.now() });
+    setWorkspaceMode("news");
+    setMobileNav(false);
+  }
+
+  useEffect(() => {
+    let dispose = () => {};
+    void setupNewsNotificationScheduler(serviceMap.news, settings.desktop.newsNotifications, openNews).then((cleanup) => { dispose = cleanup; });
+    return () => dispose();
+  }, [serviceMap.news, settings.desktop.newsNotifications]);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten = () => {};
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen<{ date?: string; edition?: NewsEdition }>("open-news", (event) => openNews(event.payload?.date, event.payload?.edition)))
+      .then((dispose) => { unlisten = dispose; });
+    return () => unlisten();
+  }, []);
 
   function updateChatMessages(chatId: string, update: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) {
     setChatState((old) => ({
@@ -153,13 +181,13 @@ export default function App() {
     if (busy) return;
     const session = createChatSession();
     setChatState((old) => ({ sessions: [session, ...old.sessions], activeId: session.id }));
-    setInput(""); setEditingMessageId(null); setActiveRuns([]); setMobileNav(false);
+    setInput(""); setEditingMessageId(null); setActiveRuns([]); setWorkspaceMode("chat"); setMobileNav(false);
   }
 
   function switchChat(id: string) {
     if (busy || id === activeChatId) return;
     setChatState((old) => ({ ...old, activeId: id }));
-    setInput(""); setEditingMessageId(null); setActiveRuns([]); setMobileNav(false);
+    setInput(""); setEditingMessageId(null); setActiveRuns([]); setWorkspaceMode("chat"); setMobileNav(false);
   }
 
   function deleteChat(id: string) {
@@ -291,6 +319,12 @@ export default function App() {
       setSettingsError("LLM API 地址格式无效，请填写完整的 http:// 或 https:// 地址。");
       return;
     }
+    try {
+      await configureAutostart(draft.desktop.autostart);
+    } catch (error) {
+      setSettingsError(`无法更新开机自启：${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
     await saveSettings(draft);
     setSettings(structuredClone(draft));
     setLlmSetupNeeded(false);
@@ -300,7 +334,7 @@ export default function App() {
 
   async function testService(service: ServiceSettings) {
     setStatus((old) => ({ ...old, [service.id]: { state: "testing" } }));
-    const path = service.id === "debris" ? "/api/openapi.json" : "/api/health/lite";
+    const path = service.id === "debris" ? "/api/openapi.json" : service.id === "starmad" ? "/api/health/lite" : "/openapi.json";
     try {
       const latency = await testEndpoint({ url: `${service.apiUrl.replace(/\/$/, "")}${path}`, method: "GET", headers: service.authToken ? { Authorization: `Bearer ${service.authToken}` } : {}, allowInvalidCerts: service.allowInvalidCerts, timeoutSeconds: 10 });
       setStatus((old) => ({ ...old, [service.id]: { state: "ok", latency } }));
@@ -321,13 +355,28 @@ export default function App() {
     setDraft((old) => ({ ...old, services: old.services.map((item) => item.id === id ? { ...item, ...patch } : item) }));
   }
 
+  async function testNewsNotification() {
+    const service = draft.services.find((item) => item.id === "news");
+    if (!service) return;
+    setNotificationTest("testing");
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    try {
+      const sent = await sendNewsNotification(service, date, now.getHours() < 16 ? "morning" : "evening", true);
+      setNotificationTest(sent ? "ok" : "error");
+    } catch {
+      setNotificationTest("error");
+    }
+  }
+
   return <div className={`app-shell ${toolsOpen ? "" : "tools-collapsed"}`}>
     <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
       <div className="brand"><span className="brand-mark"><Orbit size={22} /></span><div><strong>轨道智枢</strong><small>ORBIT COPILOT</small></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="关闭菜单"><X /></button></div>
       <button className="new-chat" onClick={newChat} disabled={busy}><MessageSquarePlus size={17} /> 新建对话</button>
       <div className="sidebar-label">工作空间</div>
       <nav className="nav-list">
-        <button className="active"><Sparkles size={17} /> 智能对话 <span className="live-dot" /></button>
+        <button className={workspaceMode === "chat" ? "active" : ""} onClick={() => setWorkspaceMode("chat")}><Sparkles size={17} /> 智能对话 {workspaceMode === "chat" && <span className="live-dot" />}</button>
+        <button className={workspaceMode === "news" ? "active" : ""} onClick={() => openNews()}><Newspaper size={17} /> 航天新闻 {workspaceMode === "news" && <span className="live-dot" />}</button>
         <button onClick={() => void openDashboard(serviceMap.debris?.dashboardUrl)}><Gauge size={17} /> 碎片监测 <ExternalLink size={13} /></button>
         <button onClick={() => void openDashboard(serviceMap.starmad?.dashboardUrl)}><Database size={17} /> 协同设计 <ExternalLink size={13} /></button>
       </nav>
@@ -342,14 +391,14 @@ export default function App() {
       <button className="settings-link" onClick={openSettings}><Settings size={17} /> 设置 <ChevronRight size={15} /></button>
     </aside>
 
-    <main className="workspace">
+    <main className={`workspace ${workspaceMode === "news" ? "news-mode" : ""}`}>
       <header className="topbar">
         <button className="mobile-menu" onClick={() => setMobileNav(true)} aria-label="打开菜单"><Menu /></button>
-        <div><span className="eyebrow">MISSION CONSOLE</span><h1>智能任务台</h1></div>
+        <div><span className="eyebrow">{workspaceMode === "news" ? "SPACE NEWS" : "MISSION CONSOLE"}</span><h1>{workspaceMode === "news" ? "航天新闻" : "智能任务台"}</h1></div>
         <div className="top-actions"><span className="connection-pill"><span /> 本地模式</span><button onClick={() => setToolsOpen(!toolsOpen)} aria-label="切换工具面板">{toolsOpen ? <PanelRightClose /> : <PanelRightOpen />}</button><button onClick={openSettings} aria-label="设置"><Settings /></button></div>
       </header>
 
-      <section className="chat-area" ref={chatAreaRef}>
+      {workspaceMode === "news" ? <NewsWorkspace service={serviceMap.news} onOpenUrl={(url) => void openDashboard(url)} target={newsTarget} /> : <><section className="chat-area" ref={chatAreaRef}>
         {!messages.length ? <div className="welcome">
           <div className="orb"><div className="orb-core"><Bot size={34} /></div><i /><i /></div>
           <span className="welcome-kicker">OFFLINE-FIRST AI OPERATIONS</span>
@@ -371,29 +420,30 @@ export default function App() {
         </div>}
       </section>
 
-      <footer className="composer-wrap">{editingMessageId && <div className="edit-banner"><Pencil /><span>正在编辑已发送消息；发送后将从这里重新生成后续对话。</span><button onClick={cancelEditing}><X />取消</button></div>}<div className="composer"><textarea ref={composerRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="询问监测数据、发射风险或协同设计…" rows={1} disabled={busy} /><button onClick={() => submit()} disabled={!input.trim() || busy} aria-label={editingMessageId ? "发送编辑后的消息" : "发送"}>{busy ? <LoaderCircle className="spin" /> : <Send />}</button></div><div className="composer-foot"><span><Wrench size={13} /> {enabledCount} 个工具已启用</span><span>Enter 发送 · Shift Enter 换行</span></div></footer>
+      <footer className="composer-wrap">{editingMessageId && <div className="edit-banner"><Pencil /><span>正在编辑已发送消息；发送后将从这里重新生成后续对话。</span><button onClick={cancelEditing}><X />取消</button></div>}<div className="composer"><textarea ref={composerRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="询问监测数据、发射风险或协同设计…" rows={1} disabled={busy} /><button onClick={() => submit()} disabled={!input.trim() || busy} aria-label={editingMessageId ? "发送编辑后的消息" : "发送"}>{busy ? <LoaderCircle className="spin" /> : <Send />}</button></div><div className="composer-foot"><span><Wrench size={13} /> {enabledCount} 个工具已启用</span><span>Enter 发送 · Shift Enter 换行</span></div></footer></>}
     </main>
 
     {toolsOpen && <aside className="context-panel"><div className="panel-head"><div><span className="eyebrow">CONNECTED SYSTEMS</span><h3>插件与连接</h3></div><button onClick={() => setToolsOpen(false)} aria-label="收起右侧工具栏"><PanelRightClose /></button></div>
-      <p className="panel-intro">只需选择两个能力插件；启用后会自动开放其中全部非敏感接口。</p>
+      <p className="panel-intro">按需启用能力插件；启用后会自动开放其中全部非敏感接口。</p>
       <div className="plugin-control-list">{PLUGIN_PACKS.map((plugin) => { const service = serviceMap[plugin.id]; if (!service) return null; const info = status[service.id] || { state: "idle" as const }; const sync = status[`${service.id}-sync`] || { state: "idle" as const }; const checked = selectedPlugins.includes(plugin.id); const count = tools.filter((tool) => tool.serviceId === plugin.id).length; return <section className={`service-card plugin-control ${checked ? "enabled" : ""}`} key={service.id}>
         <div className="service-title"><span className={`service-icon ${service.id}`}><Activity /></span><div><strong>{plugin.name}</strong><small>{count} 项非敏感能力</small></div><label className="master-switch" title={checked ? "停用插件" : "启用插件"}><input type="checkbox" checked={checked} disabled={pluginChanging !== null} onChange={() => void toggleInstalledPlugin(plugin.id)} /><i /></label></div>
         <p className="plugin-purpose">{plugin.description}</p>
         <div className="service-url">{service.apiUrl.replace(/^https?:\/\//, "")}</div>
-        <div className="service-docs"><button onClick={() => void openDashboard(apiPageUrl(service, plugin.id === "debris" ? "/api/redoc" : "/api/docs"))}><BookOpen />接口说明<ExternalLink /></button>{plugin.id === "debris" && <button onClick={() => void openDashboard(apiPageUrl(service, "/docs/api/database"))}><Database />数据库说明<ExternalLink /></button>}</div>
+        <div className="service-docs"><button onClick={() => void openDashboard(apiPageUrl(service, plugin.id === "debris" ? "/api/redoc" : plugin.id === "starmad" ? "/api/docs" : "/docs"))}><BookOpen />接口说明<ExternalLink /></button>{plugin.id === "debris" && <button onClick={() => void openDashboard(apiPageUrl(service, "/docs/api/database"))}><Database />数据库说明<ExternalLink /></button>}</div>
         <div className="service-actions"><button onClick={() => testService(service)} disabled={info.state === "testing"}>{info.state === "ok" && <Check size={14} />}{statusLabel(info.state, info.latency)}</button><button onClick={() => syncOpenApi(service)} disabled={!checked || sync.state === "testing"}><RefreshCw className={sync.state === "testing" ? "spin" : ""} size={13} />{sync.state === "ok" ? `发现 ${sync.latency} 项` : sync.state === "error" ? "同步失败" : "同步接口"}</button></div>
       </section>; })}</div>
       <div className="panel-tool-summary"><ShieldCheck /><span>已启用 {enabledCount}/{tools.length} 项安全工具</span></div>
     </aside>}
 
     {pluginSetupOpen && <div className="modal-backdrop"><section className="settings-modal plugin-modal" role="dialog" aria-modal="true" aria-label="插件中心"><header><div><span className="eyebrow">OPTIONAL PLUGINS</span><h2>{hasCompletedPluginSetup() ? "插件中心" : "选择要启用的插件"}</h2><p>插件已随安装器离线内置；勾选后启用对应连接与安全工具。</p></div>{hasCompletedPluginSetup() && <button onClick={() => setPluginSetupOpen(false)} aria-label="关闭插件中心"><X /></button>}</header>
-      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = tools.filter((tool) => tool.serviceId === plugin.id).length; const service = serviceMap[plugin.id]; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><div className="plugin-doc-links"><button type="button" onClick={(event) => { event.preventDefault(); void openDashboard(apiPageUrl(service, plugin.id === "debris" ? "/api/redoc" : "/api/docs")); }}><BookOpen />接口说明</button>{plugin.id === "debris" && <button type="button" onClick={(event) => { event.preventDefault(); void openDashboard(apiPageUrl(service, "/docs/api/database")); }}><Database />数据库说明</button>}</div><em>{toolCount} 个安全工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 注册、登录、注销、密码和管理员接口不会注册；其余接口在插件启用时默认打开。</p></div>
+      <div className="plugin-content"><div className="plugin-summary"><Boxes size={20} /><div><strong>Orbit Copilot 基础程序</strong><span>必装 · 对话、模型连接、本机凭据保护</span></div><Check size={18} /></div><div className="plugin-grid">{PLUGIN_PACKS.map((plugin) => { const checked = selectedPlugins.includes(plugin.id); const toolCount = tools.filter((tool) => tool.serviceId === plugin.id).length; const service = serviceMap[plugin.id]; return <label className={`plugin-card ${checked ? "selected" : ""}`} key={plugin.id}><input type="checkbox" checked={checked} onChange={() => togglePlugin(plugin.id)} /><span className="plugin-check">{checked && <Check size={14} />}</span><span className={`service-icon ${plugin.id}`}><Activity /></span><strong>{plugin.name}</strong><small>{plugin.description}</small><ul>{plugin.features.map((feature) => <li key={feature}>{feature}</li>)}</ul><div className="plugin-doc-links"><button type="button" onClick={(event) => { event.preventDefault(); void openDashboard(apiPageUrl(service, plugin.id === "debris" ? "/api/redoc" : plugin.id === "starmad" ? "/api/docs" : "/docs")); }}><BookOpen />接口说明</button>{plugin.id === "debris" && <button type="button" onClick={(event) => { event.preventDefault(); void openDashboard(apiPageUrl(service, "/docs/api/database")); }}><Database />数据库说明</button>}</div><em>{toolCount} 个安全工具 · 可继续同步 OpenAPI</em></label>; })}</div><p className="plugin-safety"><ShieldCheck size={15} /> 注册、登录、注销、密码和管理员接口不会注册；其余接口在插件启用时默认打开。</p></div>
       <footer><span>{pluginCommitting ? "正在注册账号并同步全部接口…" : selectedPlugins.length ? `已选择 ${selectedPlugins.length} 个插件` : "仅安装基础程序"}</span>{hasCompletedPluginSetup() && <button className="secondary" onClick={() => setPluginSetupOpen(false)} disabled={pluginCommitting}>取消</button>}<button className="primary" onClick={commitPluginSetup} disabled={pluginCommitting}>{pluginCommitting ? "正在配置…" : hasCompletedPluginSetup() ? "应用选择" : "完成安装"}</button></footer>
     </section></div>}
 
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !llmSetupNeeded) setSettingsOpen(false); }}><section className="settings-modal" role="dialog" aria-modal="true" aria-label="设置"><header><div><span className="eyebrow">LOCAL CONFIGURATION</span><h2>{llmSetupNeeded ? "连接你的 LLM API" : "连接设置"}</h2><p>{llmSetupNeeded ? "完成模型连接后即可开始对话和调用工具。" : "地址与密钥由当前设备使用，不写入业务服务数据库。"}</p></div>{!llmSetupNeeded && <button onClick={() => setSettingsOpen(false)}><X /></button>}</header>
       <div className="settings-content">{llmSetupNeeded && <div className="llm-guide"><Sparkles size={20} /><div><strong>开始前需要完成模型配置</strong><ol><li>填写 OpenAI-compatible API 地址</li><li>填写该服务实际加载的模型名称</li><li>云端服务填写 API Key；本地 Ollama / LM Studio 可留空</li></ol></div></div>}<section><h3><KeyRound size={17} /> 模型服务</h3><div className="form-grid"><label className="wide">API 地址<input autoFocus={llmSetupNeeded} value={draft.llm.baseUrl} onChange={(e) => { setSettingsError(""); setDraft({ ...draft, llm: { ...draft.llm, baseUrl: e.target.value } }); }} placeholder="http://127.0.0.1:11434/v1" /></label><label>模型名称<input value={draft.llm.model} onChange={(e) => { setSettingsError(""); setDraft({ ...draft, llm: { ...draft.llm, model: e.target.value } }); }} /></label><label>API Key<input type="password" value={draft.llm.apiKey} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, apiKey: e.target.value } })} placeholder="本地模型可留空" /></label><label>温度 <span>{draft.llm.temperature}</span><input type="range" min="0" max="1" step="0.1" value={draft.llm.temperature} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, temperature: Number(e.target.value) } })} /></label><label>最大工具轮次<input type="number" min="1" max="12" value={draft.llm.maxSteps} onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, maxSteps: Number(e.target.value) } })} /></label></div>{settingsError && <p className="settings-error"><CircleAlert size={14} /> {settingsError}</p>}</section>
-        {draft.services.map((service) => <section key={service.id}><h3>{service.id === "debris" ? <RadioTower size={17} /> : <Database size={17} />} {service.name}</h3><div className="form-grid"><label className="wide">API 地址<input value={service.apiUrl} onChange={(e) => servicePatch(service.id, { apiUrl: e.target.value })} /></label><label className="wide">页面入口<input value={service.dashboardUrl} onChange={(e) => servicePatch(service.id, { dashboardUrl: e.target.value })} /></label><label className="wide">Bearer Token（如需要）<input type="password" value={service.authToken} onChange={(e) => servicePatch(service.id, { authToken: e.target.value })} placeholder={service.id === "starmad" ? "登录后获得的令牌" : "通常留空"} /></label><label className="check-label"><input type="checkbox" checked={service.allowInvalidCerts} onChange={(e) => servicePatch(service.id, { allowInvalidCerts: e.target.checked })} /> 接受自签名证书（仅桌面端）</label></div></section>)}
+        <section><h3><Bell size={17} /> Windows 集成</h3><div className="form-grid"><label className="check-label"><input type="checkbox" checked={draft.desktop.autostart} onChange={(e) => setDraft({ ...draft, desktop: { ...draft.desktop, autostart: e.target.checked } })} /> 开机后自动在系统托盘运行</label><label className="check-label"><input type="checkbox" checked={draft.desktop.newsNotifications} onChange={(e) => setDraft({ ...draft, desktop: { ...draft.desktop, newsNotifications: e.target.checked } })} /> 每天 08:30 和 16:30 推送航天新闻通知</label><button className="notification-test" type="button" onClick={() => void testNewsNotification()} disabled={notificationTest === "testing"}>{notificationTest === "testing" ? "正在发送…" : notificationTest === "ok" ? "测试通知已发送" : notificationTest === "error" ? "测试失败，请检查通知权限" : "发送测试通知"}</button></div></section>
+        {draft.services.map((service) => <section key={service.id}><h3>{service.id === "debris" ? <RadioTower size={17} /> : service.id === "starmad" ? <Database size={17} /> : <Newspaper size={17} />} {service.name}</h3><div className="form-grid"><label className="wide">API 地址<input value={service.apiUrl} onChange={(e) => servicePatch(service.id, { apiUrl: e.target.value })} /></label><label className="wide">页面入口<input value={service.dashboardUrl} onChange={(e) => servicePatch(service.id, { dashboardUrl: e.target.value })} /></label><label className="wide">Bearer Token（如需要）<input type="password" value={service.authToken} onChange={(e) => servicePatch(service.id, { authToken: e.target.value })} placeholder={service.id === "starmad" ? "登录后获得的令牌" : "通常留空"} /></label><label className="check-label"><input type="checkbox" checked={service.allowInvalidCerts} onChange={(e) => servicePatch(service.id, { allowInvalidCerts: e.target.checked })} /> 接受自签名证书（仅桌面端）</label></div></section>)}
         <section><h3><Bot size={17} /> 助手规则</h3><label className="wide"><textarea rows={6} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} /></label></section>
       </div><footer><span><CircleAlert size={14} /> Web 版需由服务器允许目标主机；Windows 版可直接访问内网。</span>{!llmSetupNeeded && <button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button>}<button className="primary" onClick={commitSettings}>{llmSetupNeeded ? "保存并开始使用" : "保存设置"}</button></footer>
     </section></div>}

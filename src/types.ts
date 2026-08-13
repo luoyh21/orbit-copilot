@@ -9,7 +9,7 @@ export interface LlmSettings {
 }
 
 export interface ServiceSettings {
-  id: "debris" | "starmad";
+  id: "debris" | "starmad" | "news";
   name: string;
   apiUrl: string;
   dashboardUrl: string;
@@ -21,6 +21,38 @@ export interface AppSettings {
   llm: LlmSettings;
   services: ServiceSettings[];
   systemPrompt: string;
+  desktop: {
+    autostart: boolean;
+    newsNotifications: boolean;
+  };
+}
+
+export type NewsEdition = "morning" | "evening";
+
+export interface NewsItem {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  image: string;
+  source: string;
+  published: string;
+  tags: string[];
+  page_url: string;
+  original_url: string;
+}
+
+export interface DailyNews {
+  ok: boolean;
+  date: string;
+  edition: NewsEdition;
+  title: string;
+  generated_at: string;
+  count: number;
+  items: NewsItem[];
+  editions: Record<NewsEdition, { available: boolean; count: number; generated_at: string }>;
+  web_url: string;
+  qr_url: string;
 }
 
 export interface JsonSchema {
