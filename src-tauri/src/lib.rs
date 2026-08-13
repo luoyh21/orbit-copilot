@@ -277,10 +277,6 @@ fn load_secret(key: String) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--hidden"]),
-        ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -336,7 +332,8 @@ pub fn run() {
             save_secret,
             load_secret,
             save_xlsx,
-            show_main_window
+            show_main_window,
+            set_autostart
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Orbit Copilot");
@@ -353,6 +350,40 @@ fn show_window(app: &tauri::AppHandle) {
 #[tauri::command]
 fn show_main_window(app: tauri::AppHandle) {
     show_window(&app);
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let app_data = std::env::var_os("APPDATA")
+            .ok_or_else(|| "无法确定当前用户 AppData 目录".to_string())?;
+        let startup = std::path::PathBuf::from(app_data)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup");
+        std::fs::create_dir_all(&startup)
+            .map_err(|error| format!("无法打开当前用户启动目录：{error}"))?;
+        let launcher = startup.join("OrbitCopilot.vbs");
+        if enabled {
+            let executable = std::env::current_exe()
+                .map_err(|error| format!("无法确定程序路径：{error}"))?;
+            let escaped = executable.to_string_lossy().replace('"', "\"\"");
+            let script = format!(
+                "Set shell = CreateObject(\"WScript.Shell\")\r\nshell.Run \"\"\"{}\"\" --hidden\", 0, False\r\n",
+                escaped
+            );
+            std::fs::write(&launcher, script)
+                .map_err(|error| format!("无法写入当前用户启动目录：{error}"))?;
+        } else if let Err(error) = std::fs::remove_file(&launcher) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("无法移除当前用户启动文件：{error}"));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

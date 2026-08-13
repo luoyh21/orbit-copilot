@@ -12,10 +12,8 @@ function localDate(): string {
 
 export async function configureAutostart(enabled: boolean): Promise<void> {
   if (!isTauri()) return;
-  const { disable, enable, isEnabled } = await import("@tauri-apps/plugin-autostart");
-  const current = await isEnabled();
-  if (enabled && !current) await enable();
-  if (!enabled && current) await disable();
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_autostart", { enabled });
 }
 
 async function fetchDaily(service: ServiceSettings, date: string, edition: NewsEdition): Promise<DailyNews> {
