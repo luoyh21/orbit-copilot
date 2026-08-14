@@ -377,8 +377,8 @@ export default function App() {
       <nav className="nav-list">
         <button className={workspaceMode === "chat" ? "active" : ""} onClick={() => setWorkspaceMode("chat")}><Sparkles size={17} /> 智能对话 {workspaceMode === "chat" && <span className="live-dot" />}</button>
         <button className={workspaceMode === "news" ? "active" : ""} onClick={() => openNews()}><Newspaper size={17} /> 航天新闻 {workspaceMode === "news" && <span className="live-dot" />}</button>
-        <button onClick={() => void openDashboard(serviceMap.debris?.dashboardUrl)}><Gauge size={17} /> 碎片监测 <ExternalLink size={13} /></button>
-        <button onClick={() => void openDashboard(serviceMap.starmad?.dashboardUrl)}><Database size={17} /> 协同设计 <ExternalLink size={13} /></button>
+        <button className="nav-external" onClick={() => void openDashboard(serviceMap.debris?.dashboardUrl)}><Gauge size={17} /> 碎片监测 <ExternalLink size={13} /></button>
+        <button className="nav-external" onClick={() => void openDashboard(serviceMap.starmad?.dashboardUrl)}><Database size={17} /> 协同设计 <ExternalLink size={13} /></button>
       </nav>
       <div className="sidebar-label">对话历史</div>
       <div className="history-list">{[...chatState.sessions].sort((a, b) => b.updatedAt - a.updatedAt).map((session) => <div className={`history-item ${session.id === activeChatId ? "active" : ""}`} key={session.id}>
