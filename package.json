@@ -1,7 +1,7 @@
 {
   "name": "orbit-copilot",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Offline-first AI copilot for debris monitoring and STARMAD-COMET",
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
+    "desktop:build:win7": "tauri build --config src-tauri/tauri.win7.conf.json",
     "test": "vitest run"
   },
   "dependencies": {

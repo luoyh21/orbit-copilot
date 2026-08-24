@@ -2,7 +2,7 @@
 
 ## 构建环境
 
-使用 Windows 10/11 x64，安装 Node.js 24 LTS、Rust stable 和 Microsoft C++ Build Tools（Desktop development with C++）。WebView2 在 Windows 11 已内置；Windows 10 缺失时由用户安装 Microsoft Evergreen Runtime。
+使用 Windows 10/11 x64，安装 Node.js 24 LTS、Rust stable、NSIS 3 和 Microsoft C++ Build Tools（Desktop development with C++）。WebView2 在 Windows 11 已内置；普通安装器同时内嵌当前离线运行时。
 
 在项目目录执行：
 
@@ -13,10 +13,10 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.4.0_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.4.2_x64-setup.exe
+```
 
 安装后可在“设置 → Windows 集成”中启用开机自启和航天新闻通知。程序关闭按钮默认隐藏到通知区域；需要彻底退出时，请右键托盘图标并选择“退出”。
-```
 
 若 Windows 安全策略会短暂锁定源码目录中新生成的 Rust 辅助程序，可将 Cargo 构建产物放到本机应用数据目录；构建脚本会自动从该目录查找安装器：
 
@@ -42,6 +42,24 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 
 启用 STARMAD 插件后，Windows 客户端会在首次运行时注册一个独立的 `orbit-copilot-*` 服务账号。随机密码只保存在 Windows Credential Manager；后续启动自动登录并刷新 Token，不会重复注册账号。Web 版不会执行自动注册。
 
+## Windows 7 SP1 x64 独立离线包
+
+Win7 不能安装普通包内的最新版 WebView2。发布页会额外生成一个单文件：
+
+```text
+Orbit-Copilot-0.4.2-Win7-SP1-x64-offline-setup.exe
+```
+
+它内含微软官方 KB4490628 服务堆栈更新、KB4474419 SHA-2 更新、WebView2 Runtime `109.0.1518.140 x64` 和不再下载 WebView2 的应用安装器。右键选择“以管理员身份运行”；如果刚补装 Windows 更新，按提示重启后再次运行同一 EXE。完整说明见 [Win7 离线安装](Win7离线安装.md)。
+
+从源码复现该包：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File .\scripts\build-win7-offline.ps1
+```
+
+构建脚本只从 Microsoft Update Catalog 官方地址下载三个依赖，并逐一核对仓库中固定的 SHA-256；最终同时生成独立 EXE、SHA-256 文件和便于排障的 ZIP。目标机安装过程完全离线。
+
 ## 覆盖更新
 
 1. 将 `package.json` 与 `src-tauri/tauri.conf.json` 的版本同时提升。
@@ -51,6 +69,22 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 5. 启动新版，检查版本、模型连接、两个服务健康和一条只读工具调用。
 
 回退同样运行旧版安装器即可。涉及设置格式升级时，应先增加兼容迁移再发布，不应依赖回退恢复数据。
+
+## 8501 与 8502 的内网访问
+
+- `8501` 是碎片监测网页入口。
+- `8502` 是 FastAPI 接口端口；访问根路径会以 HTTP 307 跳转到 `/docs`，接口定义位于 `/api/openapi.json`。
+- 当前服务器监听 `0.0.0.0:8502`，服务器所在网段的地址为 `172.20.0.51`。同一内网或已配置路由的终端，应在应用设置中把 debris API 改为 `http://172.20.0.51:8502`，浏览器文档地址为 `http://172.20.0.51:8502/docs`。
+- `http://111.200.37.148:8502` 是公网映射地址。外部网络可访问、同一内网却打不开时，通常是网关未启用 NAT Loopback（回流）或内网策略禁止访问公网映射端口；这种情况应使用内网地址，而不是修改 API 服务。
+- 不存在 `/health`、`/healthz` 或 `/api/health` 路由，它们返回 404 不代表服务宕机。连通性检查应请求 `/api/openapi.json`。
+
+Win7 默认没有 curl，可直接用浏览器打开 `/docs`，或在命令提示符执行：
+
+```bat
+powershell -NoProfile -Command "$u='http://172.20.0.51:8502/api/openapi.json'; $r=(New-Object Net.WebClient).DownloadString($u); Write-Host $r.Substring(0,[Math]::Min(120,$r.Length))"
+```
+
+如果终端不在 `172.20.0.0/24`，网络管理员还需要为其 VLAN 配置到该网段的路由，并放行目标 TCP 8501、8502；不能仅靠修改应用解决三层网络不通。
 
 ## 自动构建流程
 
