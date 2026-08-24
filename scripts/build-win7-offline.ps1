@@ -102,11 +102,21 @@ if (Test-Path -LiteralPath $ZipPath) {
   Remove-Item -LiteralPath $ZipPath -Force
 }
 Compress-Archive -Path (Join-Path $BundleDirectory "*") -DestinationPath $ZipPath -CompressionLevel Optimal
-if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+$MakeNsisCommand = Get-Command makensis.exe -ErrorAction SilentlyContinue
+$MakeNsisPath = if ($MakeNsisCommand) { $MakeNsisCommand.Source } else { $null }
+if (-not $MakeNsisPath) {
+  $MakeNsisCandidates = @(
+    (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"),
+    (Join-Path $env:ProgramFiles "NSIS\makensis.exe"),
+    (Join-Path $env:ChocolateyInstall "bin\makensis.exe")
+  )
+  $MakeNsisPath = $MakeNsisCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+}
+if (-not $MakeNsisPath) {
   throw "makensis.exe was not found. Install NSIS 3 and add it to PATH."
 }
 $WrapperPath = Join-Path $OutputDirectory "Orbit-Copilot-$Version-Win7-SP1-x64-offline-setup.exe"
-& makensis.exe "/DAPP_VERSION=$Version" "/DBUNDLE_DIR=$BundleDirectory" "/DOUTPUT_FILE=$WrapperPath" "$PSScriptRoot\win7-offline-wrapper.nsi"
+& $MakeNsisPath "/DAPP_VERSION=$Version" "/DBUNDLE_DIR=$BundleDirectory" "/DOUTPUT_FILE=$WrapperPath" "$PSScriptRoot\win7-offline-wrapper.nsi"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $WrapperPath)) {
   throw "NSIS Win7 wrapper build failed with exit code $LASTEXITCODE."
 }
