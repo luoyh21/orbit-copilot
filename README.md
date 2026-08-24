@@ -74,7 +74,9 @@ curl http://127.0.0.1:18600/healthz
 
 ## Windows 安装与更新
 
-详见 [Windows 安装与更新](docs/Windows安装与更新.md)。用户只需要双击发布包中的 `setup.exe`：首次运行完成安装，后续直接运行新版 `setup.exe` 即可覆盖更新并保留配置与凭据，不需要另外运行 PowerShell、Node.js、Rust 或其他辅助程序。安装包内置 WebView2 离线运行时，因此全新的 Windows 10/11 电脑也不需要预装浏览器运行时或联网下载依赖。
+详见 [Windows 安装与更新](docs/Windows安装与更新.md)。Windows 10/11 用户只需要双击普通 `setup.exe`：首次运行完成安装，后续直接覆盖更新并保留配置与凭据。普通安装包内置当前 WebView2 离线运行时。
+
+Windows 7 SP1 64 位必须下载名称带 `Win7-SP1-x64-offline-setup.exe` 的独立遗留安装包，不能使用普通安装器。该单文件安装包内含微软官方 KB4490628、KB4474419、WebView2 109 最终兼容运行时和 Orbit Copilot；目标内网机不需要联网。详见 [Win7 离线安装](docs/Win7离线安装.md)。Win7 与 WebView2 109 均已停止安全更新，只能作为隔离内网的临时兼容方案。
 
 从源码构建时，执行 `scripts/build-windows.ps1`。脚本会构建 NSIS、安装并启动测试，安装器位于 `src-tauri/target/release/bundle/nsis/`；只构建不安装可追加 `-SkipInstallSmokeTest`。GitHub Actions 对每个 PR 和版本标签执行同一套 Windows 安装启动测试。
 

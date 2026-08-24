@@ -35,3 +35,16 @@ jobs:
           name: orbit-copilot-windows-${{ github.run_id }}
           path: src-tauri/target/release/bundle/nsis/*setup.exe
           if-no-files-found: error
+      - name: Install NSIS for the Win7 wrapper
+        shell: pwsh
+        run: choco install nsis --yes --no-progress
+      - name: Build standalone Win7 SP1 x64 offline installer
+        shell: pwsh
+        run: ./scripts/build-win7-offline.ps1 -SkipWebChecks -OutputDirectory "$env:RUNNER_TEMP\orbit-win7"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbit-copilot-win7-offline-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/orbit-win7/Orbit-Copilot-*-Win7-SP1-x64-offline-setup.exe
+            ${{ runner.temp }}/orbit-win7/Orbit-Copilot-*-Win7-SP1-x64-offline-setup.exe.sha256
+          if-no-files-found: error
