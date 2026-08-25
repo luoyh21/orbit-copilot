@@ -2446,7 +2446,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orbit-copilot"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "keyring",
@@ -3909,6 +3909,8 @@ dependencies = [
  "thiserror 2.0.19",
  "time",
  "url",
+ "win7-notifications",
+ "windows-version",
 ]
 
 [[package]]
@@ -4871,6 +4873,16 @@ dependencies = [
  "thiserror 2.0.19",
  "windows",
  "windows-core 0.61.2",
+]
+
+[[package]]
+name = "win7-notifications"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b4745047a00800bd8f2b8fb4b0eb6f7d96822084127f0ff7d68d07f692fe38"
+dependencies = [
+ "once_cell",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

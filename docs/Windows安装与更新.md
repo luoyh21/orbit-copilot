@@ -13,7 +13,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.4.2_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.4.3_x64-setup.exe
 ```
 
 安装后可在“设置 → Windows 集成”中启用开机自启和航天新闻通知。程序关闭按钮默认隐藏到通知区域；需要彻底退出时，请右键托盘图标并选择“退出”。
@@ -47,7 +47,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 Win7 不能安装普通包内的最新版 WebView2。发布页会额外生成一个单文件：
 
 ```text
-Orbit-Copilot-0.4.2-Win7-SP1-x64-offline-setup.exe
+Orbit-Copilot-0.4.3-Win7-SP1-x64-offline-setup.exe
 ```
 
 它内含微软官方 KB4490628 服务堆栈更新、KB4474419 SHA-2 更新、WebView2 Runtime `109.0.1518.140 x64` 和不再下载 WebView2 的应用安装器。右键选择“以管理员身份运行”；如果刚补装 Windows 更新，按提示重启后再次运行同一 EXE。完整说明见 [Win7 离线安装](Win7离线安装.md)。
