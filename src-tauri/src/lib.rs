@@ -12,6 +12,32 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 
 const CREDENTIAL_SERVICE: &str = "com.starmad.orbitcopilot";
 
+// The current static WebView2 loader uses EventSetInformation only to attach
+// optional ETW provider traits. That ADVAPI32 entry point was introduced after
+// Windows 7, so importing it prevents the process loader from starting at all.
+// Rust's Win7 target supplies a successful no-op import slot. Returning
+// ERROR_NOT_SUPPORTED here causes WebView2's availability probe to fail with
+// HRESULT 0x80070032 even though this call only publishes trace metadata.
+#[cfg(target_vendor = "win7")]
+unsafe extern "system" fn win7_event_set_information(
+    _registration_handle: usize,
+    _information_class: u32,
+    _event_information: *const core::ffi::c_void,
+    _information_length: u32,
+) -> u32 {
+    0 // ERROR_SUCCESS; optional ETW traits are intentionally not published
+}
+
+#[cfg(target_vendor = "win7")]
+#[used]
+#[export_name = "__imp_EventSetInformation"]
+static WIN7_EVENT_SET_INFORMATION_IMPORT: unsafe extern "system" fn(
+    usize,
+    u32,
+    *const core::ffi::c_void,
+    u32,
+) -> u32 = win7_event_set_information;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeRequest {

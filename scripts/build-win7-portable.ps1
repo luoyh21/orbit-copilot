@@ -3,7 +3,8 @@ param(
   [switch]$SkipWebChecks,
   [switch]$SkipLaunchSmokeTest,
   [string]$OutputDirectory,
-  [string]$RuntimeInstallerPath,
+  [Alias("RuntimeInstallerPath")]
+  [string]$RuntimeArchivePath,
   [string]$SevenZipPath
 )
 
@@ -13,10 +14,15 @@ $ProgressPreference = "SilentlyContinue"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
-$RuntimeName = "MicrosoftEdgeWebView2Runtime-109.0.1518.140-x64.exe"
-$RuntimeUrl = "https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/updt/2023/09/microsoftedgestandaloneinstallerx64_1c890b4b8dd6b7c93da98ebdc08ecdc5e30e50cb.exe"
-$RuntimeSha256 = "eac95c8095ec5f9971eade9827d8fb67fd251f5c16e702b5312d31067e39119b"
-$RuntimeVersion = "109.0.1518.140"
+$RuntimeName = "Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64.cab"
+# Microsoft's retired WebView2 109 Fixed Version Runtime is no longer served by
+# its original CDN. This is a byte-for-byte archive copy; the pinned archive
+# hash and Microsoft Authenticode signatures on the extracted binaries are both
+# verified below before anything is packaged.
+$RuntimeUrl = "https://github.com/westinyang/WebView2RuntimeArchive/releases/download/109.0.1518.78/Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64.cab"
+$RuntimeSha256 = "7622281cf83de1a35e3a471f432f7a897d65f0a7d3975df08512b7b253dd45c7"
+$RuntimeVersion = "109.0.1518.78"
+$RuntimeFolderName = "Microsoft.WebView2.FixedVersionRuntime.$RuntimeVersion.x64"
 $Win7Toolchain = "nightly-2026-08-25"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -64,42 +70,29 @@ function Assert-Sha256([string]$Path, [string]$Expected) {
   if ($Actual -ne $Expected) { throw "SHA-256 mismatch for $Path. Expected $Expected, got $Actual." }
 }
 
-if ([string]::IsNullOrWhiteSpace($RuntimeInstallerPath)) {
+if ([string]::IsNullOrWhiteSpace($RuntimeArchivePath)) {
   $DownloadDirectory = Join-Path $BuildCache "downloads"
   New-Item -ItemType Directory -Path $DownloadDirectory -Force | Out-Null
-  $RuntimeInstallerPath = Join-Path $DownloadDirectory $RuntimeName
-  $NeedsDownload = -not (Test-Path -LiteralPath $RuntimeInstallerPath -PathType Leaf)
+  $RuntimeArchivePath = Join-Path $DownloadDirectory $RuntimeName
+  $NeedsDownload = -not (Test-Path -LiteralPath $RuntimeArchivePath -PathType Leaf)
   if (-not $NeedsDownload) {
-    try { Assert-Sha256 $RuntimeInstallerPath $RuntimeSha256 } catch { $NeedsDownload = $true }
+    try { Assert-Sha256 $RuntimeArchivePath $RuntimeSha256 } catch { $NeedsDownload = $true }
   }
   if ($NeedsDownload) {
-    Remove-Item -LiteralPath $RuntimeInstallerPath -Force -ErrorAction SilentlyContinue
-    Write-Host "Downloading Microsoft WebView2 109 from the pinned Microsoft Update Catalog URL..."
-    Invoke-WebRequest -Uri $RuntimeUrl -OutFile $RuntimeInstallerPath
+    Remove-Item -LiteralPath $RuntimeArchivePath -Force -ErrorAction SilentlyContinue
+    Write-Host "Downloading the pinned archive of Microsoft WebView2 Fixed Version Runtime 109..."
+    Invoke-WebRequest -Uri $RuntimeUrl -OutFile $RuntimeArchivePath
   }
 }
-$RuntimeInstallerPath = (Resolve-Path -LiteralPath $RuntimeInstallerPath).Path
-Assert-Sha256 $RuntimeInstallerPath $RuntimeSha256
-Write-Host "WebView2 installer source verified: $RuntimeSha256" -ForegroundColor Green
+$RuntimeArchivePath = (Resolve-Path -LiteralPath $RuntimeArchivePath).Path
+Assert-Sha256 $RuntimeArchivePath $RuntimeSha256
+Write-Host "WebView2 fixed-runtime archive verified: $RuntimeSha256" -ForegroundColor Green
 
 $ExtractRoot = Join-Path $BuildCache "webview2-109-extract"
 if (Test-Path -LiteralPath $ExtractRoot) { Remove-Item -LiteralPath $ExtractRoot -Recurse -Force }
-$OuterDirectory = Join-Path $ExtractRoot "outer"
-$PayloadDirectory = Join-Path $ExtractRoot "payload"
-$RuntimeDirectory = Join-Path $ExtractRoot "runtime"
-New-Item -ItemType Directory -Path $OuterDirectory,$PayloadDirectory,$RuntimeDirectory -Force | Out-Null
-
-Invoke-SevenZip @("x", "-y", "-o$OuterDirectory", $RuntimeInstallerPath)
-$NestedInstaller = Get-ChildItem -LiteralPath $OuterDirectory -Recurse | Where-Object {
-  -not $_.PSIsContainer -and $_.Name -match "^MicrosoftEdge_X64_$([Regex]::Escape($RuntimeVersion))\.exe\."
-} | Select-Object -First 1
-if (-not $NestedInstaller) { throw "The x64 WebView2 payload was not found in the verified installer." }
-Invoke-SevenZip @("x", "-y", "-o$PayloadDirectory", $NestedInstaller.FullName)
-$MSEdgeArchive = Get-ChildItem -LiteralPath $PayloadDirectory -Recurse -Filter "MSEDGE.7z" | Select-Object -First 1
-if (-not $MSEdgeArchive) { throw "MSEDGE.7z was not found in the verified WebView2 payload." }
-Invoke-SevenZip @("x", "-y", "-o$RuntimeDirectory", $MSEdgeArchive.FullName)
-
-$ExtractedRuntime = Join-Path $RuntimeDirectory "Chrome-bin\$RuntimeVersion"
+New-Item -ItemType Directory -Path $ExtractRoot -Force | Out-Null
+Invoke-SevenZip @("x", "-y", "-o$ExtractRoot", $RuntimeArchivePath)
+$ExtractedRuntime = Join-Path $ExtractRoot $RuntimeFolderName
 $RequiredRuntimeFiles = @(
   "msedgewebview2.exe",
   "msedge.dll",
@@ -111,6 +104,17 @@ foreach ($RelativePath in $RequiredRuntimeFiles) {
     throw "Extracted fixed runtime is incomplete: $RelativePath"
   }
 }
+
+foreach ($SignedRelativePath in @("msedgewebview2.exe", "msedge.dll", "EBWebView\x64\EmbeddedBrowserWebView.dll")) {
+  $SignedPath = Join-Path $ExtractedRuntime $SignedRelativePath
+  $Signature = Get-AuthenticodeSignature -LiteralPath $SignedPath
+  if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+      -not $Signature.SignerCertificate -or
+      $Signature.SignerCertificate.Subject -notmatch "Microsoft Corporation") {
+    throw "Microsoft Authenticode verification failed for $SignedRelativePath (status=$($Signature.Status), signer=$($Signature.SignerCertificate.Subject))."
+  }
+}
+Write-Host "WebView2 runtime binaries have valid Microsoft Authenticode signatures." -ForegroundColor Green
 
 $TauriRuntimeDirectory = Join-Path $ProjectRoot "src-tauri\WebView2Runtime"
 if (Test-Path -LiteralPath $TauriRuntimeDirectory) {
@@ -171,6 +175,10 @@ Copy-Item -LiteralPath "$PSScriptRoot\START-ORBIT-COPILOT.cmd" -Destination $Pac
 Copy-Item -LiteralPath "$PSScriptRoot\TEST-WIN7-PORTABLE.cmd" -Destination $PackageDirectory
 Copy-Item -LiteralPath "$PSScriptRoot\test-win7-portable.ps1" -Destination (Join-Path $PackageDirectory "TEST-WIN7-PORTABLE.ps1")
 Copy-Item -LiteralPath "$ProjectRoot\docs\Win7离线安装.md" -Destination (Join-Path $PackageDirectory "README-Win7.md")
+Copy-Item -LiteralPath "$ProjectRoot\docs\Win7虚拟机验收报告.md" -Destination $PackageDirectory
+$EvidenceDirectory = Join-Path $PackageDirectory "assets\win7-vm"
+New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
+Copy-Item -Path "$ProjectRoot\docs\assets\win7-vm\*" -Destination $EvidenceDirectory
 
 $SmokeReport = Join-Path $PackageDirectory "BUILD-SMOKE-TEST.txt"
 $TestArguments = @(

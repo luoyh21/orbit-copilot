@@ -17,6 +17,9 @@ tauri-build = { version = "2", features = [] }
 # use the audited local patch until the upstream crate supports the Win7 target.
 [patch.crates-io]
 ctor = { path = "vendor/ctor" }
+# Keep the generated COM bindings used by Tauri/Wry, but pin the native
+# WebView2 Loader to Microsoft's final Win7-compatible SDK (1.0.1518.46).
+webview2-com-sys = { path = "vendor/webview2-com-sys" }
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -34,4 +37,8 @@ tokio = { version = "1", features = ["time"] }
 tauri-plugin-notification = "2.3.3"
 
 [target.'cfg(target_vendor = "win7")'.dependencies]
+# The dedicated Win7 target is release-only. Force Tauri's embedded asset
+# protocol at the dependency level so a direct Cargo/xwin build can never fall
+# back to the localhost development URL.
+tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
 win7-notifications = "0.4.5"

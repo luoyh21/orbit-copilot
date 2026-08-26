@@ -52,7 +52,7 @@ Orbit-Copilot-0.4.4-Win7-SP1-x64-portable.zip.sha256
 Orbit-Copilot-0.4.4-Win7-SP1-x64-portable-test-report.txt
 ```
 
-它不是安装器。完整解压到本机磁盘后直接运行 `Orbit-Copilot.exe`，无需管理员权限。WebView2 Runtime `109.0.1518.140 x64` 固定携带在应用相邻目录，不调用 Evergreen 安装器，不写系统目录。旧的 `Win7-SP1-x64-offline-setup.exe` 因临时目录和系统 WebView 安装会触发内网权限策略，已经停用。完整说明见 [Win7 绿色版](Win7离线安装.md)。
+它不是安装器。完整解压到本机磁盘后直接运行 `Orbit-Copilot.exe`，无需管理员权限。真正的 WebView2 Fixed Version Runtime `109.0.1518.78 x64` 固定携带在应用相邻目录，不调用 Evergreen 安装器，不写系统目录。旧的 `Win7-SP1-x64-offline-setup.exe` 因临时目录和系统 WebView 安装会触发内网权限策略，已经停用。完全未更新的 Win7 SP1 还需由管理员一次性离线安装 `KB4490628`、`KB4474419-v3` 和 `KB2670838`；绿色包自检只报告缺项，不会自行改系统。完整说明、文件哈希和安装顺序见 [Win7 绿色版](Win7离线安装.md)。
 
 从源码复现该包：
 
@@ -61,7 +61,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-win7-portable.ps1 `
   -OutputDirectory "D:\orbit-build\win7-portable"
 ```
 
-构建脚本固定使用真实的 `x86_64-win7-windows-msvc` 目标，而不是把普通 Windows 10 目标改名；同时静态链接 Visual C++ 运行库、校验微软 WebView2 109 来源、检查 PE 兼容版本，并实际启动主程序验证 WebView2 进程来自包内目录。最终生成 ZIP、SHA-256 和测试报告。目标机运行过程完全离线。
+构建脚本固定使用真实的 `x86_64-win7-windows-msvc` 目标，而不是把普通 Windows 10 目标改名；同时静态链接 Visual C++ 运行库、校验 WebView2 109 CAB 的固定哈希和微软代码签名、检查 PE 兼容版本，并实际启动主程序验证 WebView2 进程来自包内目录。最终生成 ZIP、SHA-256 和测试报告。目标机运行过程完全离线。
 
 ## 覆盖更新
 
@@ -102,5 +102,6 @@ powershell -NoProfile -Command "$u='http://172.20.0.51:8502/api/openapi.json'; $
 - 点击“碎片监测”和“协同设计”会由 Windows 默认浏览器打开对应页面。
 - 清空用户态配置模拟首次运行：完成插件选择后自动出现 88/88 个工具，再填写 LLM 设置并完成一次真实工具对话。
 - 在 Win7 SP1 x64 虚拟机中从本地磁盘解压绿色包，运行 `TEST-WIN7-PORTABLE.cmd`，确认主窗口启动且 WebView2 进程来自包内固定运行时。
+- 确认自检输出包含 `no localhost error page`，并手动看到插件选择或设置页面，而不是 WebView2 的 `localhost refused` 错误页；基准结果见 [Win7 虚拟机验收报告](Win7虚拟机验收报告.md)。
 - 自签名证书开关仅对明确配置的单个服务生效。
 - 敏感接口不出现在工具注册表；其余接口在已选插件内默认打开，分页、开关和滚动均正常。

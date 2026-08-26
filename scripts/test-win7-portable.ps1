@@ -65,6 +65,17 @@ try {
   Add-Report ("Host OS: " + [Environment]::OSVersion.VersionString + "; 64-bit OS=" + $Is64BitOs)
   Add-Report ("Package: " + $PackageDirectory)
 
+  $HostVersion = [Environment]::OSVersion.Version
+  if ($HostVersion.Major -eq 6 -and $HostVersion.Minor -eq 1) {
+    $RequiredUpdates = @("KB4490628", "KB4474419", "KB2670838")
+    $InstalledUpdates = @(Get-HotFix -ErrorAction SilentlyContinue | ForEach-Object { $_.HotFixID.ToUpperInvariant() })
+    $MissingUpdates = @($RequiredUpdates | Where-Object { $InstalledUpdates -notcontains $_ })
+    if ($MissingUpdates.Count -gt 0) {
+      throw "Windows 7 prerequisite updates are missing: $($MissingUpdates -join ', '). Install the signed Microsoft MSU files offline, restart Windows, and run this test again."
+    }
+    Add-Report ("Win7 prerequisites: PASS (" + ($RequiredUpdates -join ", ") + ")")
+  }
+
   $AppPath = Assert-File "Orbit-Copilot.exe"
   $RuntimeExe = Assert-File "WebView2Runtime\msedgewebview2.exe"
   $RuntimeDll = Assert-File "WebView2Runtime\msedge.dll"
@@ -100,6 +111,7 @@ try {
   $ForbiddenImports = @(
     "api-ms-win-core-winrt-l1-1-0.dll",
     "RoGetActivationFactory",
+    "EventSetInformation",
     "VCRUNTIME140.dll",
     "VCRUNTIME140_1.dll",
     "MSVCP140.dll",
@@ -113,7 +125,7 @@ try {
   Add-Report "Win7 API and static CRT check: PASS (no WinRT activation or dynamic VC/UCRT imports)"
 
   $RuntimeVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($RuntimeExe).ProductVersion
-  if (-not $RuntimeVersion -or -not $RuntimeVersion.StartsWith("109.0.1518.140")) {
+  if (-not $RuntimeVersion -or -not $RuntimeVersion.StartsWith("109.0.1518.78")) {
     throw "Unexpected fixed WebView2 version: $RuntimeVersion"
   }
   Add-Report ("Fixed WebView2: PASS (" + $RuntimeVersion + ")")
@@ -142,6 +154,27 @@ try {
       }
       if (-not $WindowReady) { throw "Orbit Copilot did not create a window within 30 seconds." }
 
+      # A window handle alone is not enough: a build that omitted Tauri's
+      # custom-protocol feature opens WebView2's localhost error page. Read the
+      # accessibility tree and reject that false-positive explicitly.
+      Add-Type -AssemblyName UIAutomationClient
+      $RootElement = [Windows.Automation.AutomationElement]::FromHandle($App.MainWindowHandle)
+      $UiText = ""
+      if ($RootElement) {
+        $UiElements = $RootElement.FindAll(
+          [Windows.Automation.TreeScope]::Descendants,
+          [Windows.Automation.Condition]::TrueCondition
+        )
+        $UiNames = for ($ElementIndex = 0; $ElementIndex -lt $UiElements.Count; $ElementIndex++) {
+          $Name = $UiElements.Item($ElementIndex).Current.Name
+          if ($Name) { $Name }
+        }
+        $UiText = $UiNames -join "`n"
+      }
+      if ($UiText -match '(?i)localhost refused|can.t reach this page|ERR_CONNECTION_REFUSED') {
+        throw "The app created a window but loaded WebView2's localhost error page. Rebuild with Tauri custom-protocol assets enabled."
+      }
+
       $ExpectedRuntimeRoot = (Resolve-Path -LiteralPath (Join-Path $PackageDirectory "WebView2Runtime")).Path
       $RuntimeProcesses = Get-WmiObject Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue | Where-Object {
         $_.ExecutablePath -and $_.ExecutablePath.StartsWith($ExpectedRuntimeRoot, [StringComparison]::OrdinalIgnoreCase)
@@ -149,7 +182,7 @@ try {
       if (-not $RuntimeProcesses) {
         throw "The app window opened, but no WebView2 process was loaded from the bundled fixed runtime."
       }
-      Add-Report ("Launch smoke test: PASS (window handle " + $App.MainWindowHandle + ", bundled WebView2 processes=" + @($RuntimeProcesses).Count + ")")
+      Add-Report ("Launch smoke test: PASS (window handle " + $App.MainWindowHandle + ", no localhost error page, bundled WebView2 processes=" + @($RuntimeProcesses).Count + ")")
     } finally {
       if ($App -and -not $App.HasExited) {
         & taskkill.exe /PID $App.Id /T /F | Out-Null
