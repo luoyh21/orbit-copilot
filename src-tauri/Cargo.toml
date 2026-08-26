@@ -12,6 +12,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# Rust's official Win7 target reports target_vendor="win7". ctor 0.8.0 only
+# recognizes target_vendor="pc" for Windows COFF initialization sections, so
+# use the audited local patch until the upstream crate supports the Win7 target.
+[patch.crates-io]
+ctor = { path = "vendor/ctor" }
+
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
@@ -21,6 +27,11 @@ rust_xlsxwriter = "0.92"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-notification = { version = "2.3.3", features = ["windows7-compat"] }
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["time"] }
+
+[target.'cfg(not(target_vendor = "win7"))'.dependencies]
+tauri-plugin-notification = "2.3.3"
+
+[target.'cfg(target_vendor = "win7")'.dependencies]
+win7-notifications = "0.4.5"

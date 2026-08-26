@@ -34,16 +34,13 @@ export async function sendNewsNotification(service: ServiceSettings, date: strin
   if (!force && localStorage.getItem(key)) return false;
   const daily = await fetchDaily(service, date, edition);
   if (!daily.count && !force) return false;
-  const notification = await import("@tauri-apps/plugin-notification");
-  let granted = await notification.isPermissionGranted();
-  if (!granted) granted = await notification.requestPermission() === "granted";
-  if (!granted) throw new Error("Windows 通知权限未开启");
   const names = daily.items.slice(0, 2).map((item) => item.title).join("；");
-  notification.sendNotification({
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("send_desktop_notification", {
     title: `航天速递 · ${edition === "morning" ? "上午刊" : "下午刊"}`,
     body: daily.count ? `今日新增 ${daily.count} 条：${names}` : "通知测试成功；当前刊次暂未生成新闻。",
-    autoCancel: true,
-    extra: { kind: "space-news", date, edition },
+    date,
+    edition,
   });
   if (!force) localStorage.setItem(key, String(Date.now()));
   return true;
@@ -56,15 +53,21 @@ export async function setupNewsNotificationScheduler(
 ): Promise<() => void> {
   if (!isTauri() || !service) return () => {};
   const activeService = service;
-  const notification = await import("@tauri-apps/plugin-notification");
-  const actionListener = await notification.onAction((notice) => {
-    const extra = notice.extra || {};
-    if (extra.kind !== "space-news") return;
-    const date = typeof extra.date === "string" ? extra.date : localDate();
-    const edition: NewsEdition = extra.edition === "evening" ? "evening" : "morning";
-    onOpenNews(date, edition);
-    void import("@tauri-apps/api/core").then(({ invoke }) => invoke("show_main_window"));
-  });
+  let unregisterAction = () => {};
+  const { invoke } = await import("@tauri-apps/api/core");
+  const backend = await invoke<string>("desktop_notification_backend");
+  if (backend === "modern") {
+    const notification = await import("@tauri-apps/plugin-notification");
+    const actionListener = await notification.onAction((notice) => {
+      const extra = notice.extra || {};
+      if (extra.kind !== "space-news") return;
+      const date = typeof extra.date === "string" ? extra.date : localDate();
+      const edition: NewsEdition = extra.edition === "evening" ? "evening" : "morning";
+      onOpenNews(date, edition);
+      void invoke("show_main_window");
+    });
+    unregisterAction = () => actionListener.unregister();
+  }
 
   async function check() {
     if (!enabled) return;
@@ -81,6 +84,6 @@ export async function setupNewsNotificationScheduler(
   const timer = window.setInterval(() => void check(), 60_000);
   return () => {
     window.clearInterval(timer);
-    actionListener.unregister();
+    unregisterAction();
   };
 }

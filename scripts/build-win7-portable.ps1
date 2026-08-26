@@ -147,7 +147,10 @@ if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
 $env:RUSTUP_TOOLCHAIN = $Win7Toolchain
 $env:CARGO_UNSTABLE_BUILD_STD = "std,panic_abort"
 $env:CARGO_TARGET_X86_64_WIN7_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
-$env:STATIC_VCRUNTIME = "true"
+# Do not set Tauri's legacy STATIC_VCRUNTIME switch here. The Win7 Rust target
+# already links the full CRT through +crt-static; combining both switches makes
+# Tauri override the static UCRT with the dynamic import library.
+Remove-Item Env:STATIC_VCRUNTIME -ErrorAction SilentlyContinue
 Write-Host "Building with the real x86_64-win7-windows-msvc target and a static Visual C++ runtime..."
 npm run desktop:build:win7:portable
 if ($LASTEXITCODE -ne 0) { throw "Win7 portable desktop build failed with exit code $LASTEXITCODE." }

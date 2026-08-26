@@ -93,6 +93,25 @@ try {
   }
   Add-Report ("PE target: PASS (AMD64, OS " + $Pe.MajorOs + "." + $Pe.MinorOs + ", subsystem " + $Pe.MajorSubsystem + "." + $Pe.MinorSubsystem + ")")
 
+  # A PE header that advertises Win7 is insufficient when a dependency still
+  # imports a newer Windows API. This caught the notification crate's former
+  # static dependency on RoGetActivationFactory, which only exists on Win8+.
+  $ExecutableStrings = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($AppPath))
+  $ForbiddenImports = @(
+    "api-ms-win-core-winrt-l1-1-0.dll",
+    "RoGetActivationFactory",
+    "VCRUNTIME140.dll",
+    "VCRUNTIME140_1.dll",
+    "MSVCP140.dll",
+    "ucrtbase.dll"
+  )
+  foreach ($Import in $ForbiddenImports) {
+    if ($ExecutableStrings.IndexOf($Import, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      throw "The application contains a forbidden Win8+/dynamic-CRT import: $Import"
+    }
+  }
+  Add-Report "Win7 API and static CRT check: PASS (no WinRT activation or dynamic VC/UCRT imports)"
+
   $RuntimeVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($RuntimeExe).ProductVersion
   if (-not $RuntimeVersion -or -not $RuntimeVersion.StartsWith("109.0.1518.140")) {
     throw "Unexpected fixed WebView2 version: $RuntimeVersion"

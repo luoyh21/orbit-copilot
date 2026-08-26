@@ -17,6 +17,7 @@
 双击 `TEST-WIN7-PORTABLE.cmd` 可检查：
 
 - 主程序是 AMD64，并将 PE 最低系统/子系统版本限定在 Windows 7 范围；
+- 主程序不导入仅 Windows 8+ 提供的 WinRT 激活接口，也不依赖动态 VC/UCRT；
 - 固定 WebView2 109 文件齐全；
 - 包内没有 `setup.exe`、MSI、MSU 或 WebView 安装器；
 - 程序窗口能够启动，且浏览器进程确实来自包内 `WebView2Runtime`。
@@ -42,7 +43,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-win7-portable.ps1 `
   -OutputDirectory "D:\orbit-build\win7-portable"
 ```
 
-脚本会核对三处应用版本号，校验微软 WebView2 109 离线文件的固定 SHA-256，从中提取固定运行时，并使用 `nightly-2026-08-25` 的 `x86_64-win7-windows-msvc` 目标和静态 Visual C++ 运行库编译。随后运行结构/PE/启动自检，最后生成 ZIP、SHA-256 和文本测试报告。可用 `-RuntimeInstallerPath` 指向已经下载且哈希一致的微软离线文件，避免重复下载。
+脚本会核对三处应用版本号，校验微软 WebView2 109 离线文件的固定 SHA-256，从中提取固定运行时，并使用 `nightly-2026-08-25` 的 `x86_64-win7-windows-msvc` 目标和静态 Visual C++ 运行库编译。Win7 目标使用 Win7 原生桌面通知实现，不链接 Windows 8 才提供的 WinRT 通知接口。随后运行结构/PE/导入表/启动自检，最后生成 ZIP、SHA-256 和文本测试报告。可用 `-RuntimeInstallerPath` 指向已经下载且哈希一致的微软离线文件，避免重复下载。
 
 ## 安全边界
 

@@ -274,10 +274,67 @@ fn load_secret(key: String) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+fn desktop_notification_backend() -> &'static str {
+    #[cfg(target_vendor = "win7")]
+    {
+        "win7"
+    }
+    #[cfg(not(target_vendor = "win7"))]
+    {
+        "modern"
+    }
+}
+
+#[cfg(not(target_vendor = "win7"))]
+#[tauri::command]
+fn send_desktop_notification(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    date: String,
+    edition: String,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .extra("kind", "space-news")
+        .extra("date", date)
+        .extra("edition", edition)
+        .auto_cancel()
+        .show()
+        .map_err(|error| format!("无法发送 Windows 通知：{error}"))
+}
+
+#[cfg(target_vendor = "win7")]
+#[tauri::command]
+fn send_desktop_notification(
+    title: String,
+    body: String,
+    date: String,
+    edition: String,
+) -> Result<(), String> {
+    let _ = (date, edition);
+    let mut notification = win7_notifications::Notification::new();
+    notification
+        .appname("轨道智枢 · Orbit Copilot")
+        .summary(&title)
+        .body(&body);
+    notification
+        .show()
+        .map_err(|code| format!("无法发送 Windows 7 通知，系统错误码：{code}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
+    let builder = tauri::Builder::default();
+    #[cfg(not(target_vendor = "win7"))]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "打开轨道智枢", true, None::<&str>)?;
@@ -333,7 +390,9 @@ pub fn run() {
             load_secret,
             save_xlsx,
             show_main_window,
-            set_autostart
+            set_autostart,
+            desktop_notification_backend,
+            send_desktop_notification
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Orbit Copilot");
