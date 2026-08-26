@@ -35,16 +35,17 @@ jobs:
           name: orbit-copilot-windows-${{ github.run_id }}
           path: src-tauri/target/release/bundle/nsis/*setup.exe
           if-no-files-found: error
-      - name: Install NSIS for the Win7 wrapper
+      - name: Install the pinned Rust toolchain for the real Win7 target
         shell: pwsh
-        run: choco install nsis --yes --no-progress
-      - name: Build standalone Win7 SP1 x64 offline installer
+        run: rustup toolchain install nightly-2026-08-25 --profile minimal --component rust-src
+      - name: Build and launch-test Win7 SP1 x64 portable package
         shell: pwsh
-        run: ./scripts/build-win7-offline.ps1 -SkipWebChecks -OutputDirectory "$env:RUNNER_TEMP\orbit-win7"
+        run: ./scripts/build-win7-portable.ps1 -SkipWebChecks -OutputDirectory "$env:RUNNER_TEMP\orbit-win7-portable"
       - uses: actions/upload-artifact@v7
         with:
-          name: orbit-copilot-win7-offline-${{ github.run_id }}
+          name: orbit-copilot-win7-portable-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/orbit-win7/Orbit-Copilot-*-Win7-SP1-x64-offline-setup.exe
-            ${{ runner.temp }}/orbit-win7/Orbit-Copilot-*-Win7-SP1-x64-offline-setup.exe.sha256
+            ${{ runner.temp }}/orbit-win7-portable/Orbit-Copilot-*-Win7-SP1-x64-portable.zip
+            ${{ runner.temp }}/orbit-win7-portable/Orbit-Copilot-*-Win7-SP1-x64-portable.zip.sha256
+            ${{ runner.temp }}/orbit-win7-portable/Orbit-Copilot-*-Win7-SP1-x64-portable-test-report.txt
           if-no-files-found: error

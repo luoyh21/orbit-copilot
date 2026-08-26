@@ -13,7 +13,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 脚本会校验版本号、安装锁定依赖、运行 Web 构建与测试，生成 NSIS 安装器，并完成静默安装与启动冒烟测试。只构建、不安装时追加 `-SkipInstallSmokeTest`。安装器位于：
 
 ```text
-src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.4.3_x64-setup.exe
+src-tauri\target\release\bundle\nsis\轨道智枢 Orbit Copilot_0.4.4_x64-setup.exe
 ```
 
 安装后可在“设置 → Windows 集成”中启用开机自启和航天新闻通知。程序关闭按钮默认隐藏到通知区域；需要彻底退出时，请右键托盘图标并选择“退出”。
@@ -42,23 +42,26 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 
 启用 STARMAD 插件后，Windows 客户端会在首次运行时注册一个独立的 `orbit-copilot-*` 服务账号。随机密码只保存在 Windows Credential Manager；后续启动自动登录并刷新 Token，不会重复注册账号。Web 版不会执行自动注册。
 
-## Windows 7 SP1 x64 独立离线包
+## Windows 7 SP1 x64 绿色免安装包
 
-Win7 不能安装普通包内的最新版 WebView2。发布页会额外生成一个单文件：
+Win7 不能使用普通安装器内的最新版 WebView2。发布页会额外生成：
 
 ```text
-Orbit-Copilot-0.4.3-Win7-SP1-x64-offline-setup.exe
+Orbit-Copilot-0.4.4-Win7-SP1-x64-portable.zip
+Orbit-Copilot-0.4.4-Win7-SP1-x64-portable.zip.sha256
+Orbit-Copilot-0.4.4-Win7-SP1-x64-portable-test-report.txt
 ```
 
-它内含微软官方 KB4490628 服务堆栈更新、KB4474419 SHA-2 更新、WebView2 Runtime `109.0.1518.140 x64` 和不再下载 WebView2 的应用安装器。右键选择“以管理员身份运行”；如果刚补装 Windows 更新，按提示重启后再次运行同一 EXE。完整说明见 [Win7 离线安装](Win7离线安装.md)。
+它不是安装器。完整解压到本机磁盘后直接运行 `Orbit-Copilot.exe`，无需管理员权限。WebView2 Runtime `109.0.1518.140 x64` 固定携带在应用相邻目录，不调用 Evergreen 安装器，不写系统目录。旧的 `Win7-SP1-x64-offline-setup.exe` 因临时目录和系统 WebView 安装会触发内网权限策略，已经停用。完整说明见 [Win7 绿色版](Win7离线安装.md)。
 
 从源码复现该包：
 
 ```powershell
-PowerShell -ExecutionPolicy Bypass -File .\scripts\build-win7-offline.ps1
+PowerShell -ExecutionPolicy Bypass -File .\scripts\build-win7-portable.ps1 `
+  -OutputDirectory "D:\orbit-build\win7-portable"
 ```
 
-构建脚本只从 Microsoft Update Catalog 官方地址下载三个依赖，并逐一核对仓库中固定的 SHA-256；最终同时生成独立 EXE、SHA-256 文件和便于排障的 ZIP。目标机安装过程完全离线。
+构建脚本固定使用真实的 `x86_64-win7-windows-msvc` 目标，而不是把普通 Windows 10 目标改名；同时静态链接 Visual C++ 运行库、校验微软 WebView2 109 来源、检查 PE 兼容版本，并实际启动主程序验证 WebView2 进程来自包内目录。最终生成 ZIP、SHA-256 和测试报告。目标机运行过程完全离线。
 
 ## 覆盖更新
 
@@ -88,7 +91,7 @@ powershell -NoProfile -Command "$u='http://172.20.0.51:8502/api/openapi.json'; $
 
 ## 自动构建流程
 
-仓库内 `.github/workflows/windows-installer.yml` 支持 PR、手动触发和 `v*` 标签触发。它在 `windows-latest` 上完成依赖安装、前端校验、NSIS 构建、静默安装和真实应用启动，再上传安装器 artifact。正式分发前建议增加组织代码签名证书；当前未签名安装器可能触发 SmartScreen 提示。
+仓库内 `.github/workflows/windows-installer.yml` 支持 PR、手动触发和 `v*` 标签触发。它在 `windows-latest` 上完成依赖安装、前端校验、NSIS 构建、静默安装和真实应用启动；随后另用 Win7 专用 Rust 目标生成绿色包，对其执行结构、PE、固定 WebView2 与真实启动检查，再上传两类 artifact。正式分发前建议增加组织代码签名证书；当前未签名程序可能触发安全软件提示。
 
 ## 发布验收清单
 
@@ -98,6 +101,6 @@ powershell -NoProfile -Command "$u='http://172.20.0.51:8502/api/openapi.json'; $
 - 8501/18501 页面入口可打开，8502/18502 API 健康检查成功。
 - 点击“碎片监测”和“协同设计”会由 Windows 默认浏览器打开对应页面。
 - 清空用户态配置模拟首次运行：完成插件选择后自动出现 88/88 个工具，再填写 LLM 设置并完成一次真实工具对话。
-- 在未安装 WebView2 Runtime 的 Windows 沙箱或虚拟机中运行 setup，确认内置离线运行时可完成安装并启动。
+- 在 Win7 SP1 x64 虚拟机中从本地磁盘解压绿色包，运行 `TEST-WIN7-PORTABLE.cmd`，确认主窗口启动且 WebView2 进程来自包内固定运行时。
 - 自签名证书开关仅对明确配置的单个服务生效。
 - 敏感接口不出现在工具注册表；其余接口在已选插件内默认打开，分页、开关和滚动均正常。
