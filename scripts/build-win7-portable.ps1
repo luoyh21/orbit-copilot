@@ -62,7 +62,7 @@ if ([string]::IsNullOrWhiteSpace($SevenZipPath) -or -not (Test-Path -LiteralPath
 
 function Invoke-SevenZip([string[]]$Arguments) {
   & $SevenZipPath @Arguments
-  if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE: $($Arguments -join ' ')" }
+  if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code ${LASTEXITCODE}: $($Arguments -join ' ')" }
 }
 
 function Assert-Sha256([string]$Path, [string]$Expected) {
