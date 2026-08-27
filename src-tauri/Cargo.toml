@@ -4,6 +4,20 @@ version = "0.4.4"
 description = "Offline-first orbital operations copilot"
 authors = ["STARMAD"]
 edition = "2021"
+default-run = "orbit-copilot"
+
+[features]
+default = []
+win7-probe = []
+
+[[bin]]
+name = "orbit-copilot"
+path = "src/main.rs"
+
+[[bin]]
+name = "webview2_probe"
+path = "src/bin/webview2_probe.rs"
+required-features = ["win7-probe"]
 
 [lib]
 name = "orbit_copilot_lib"
