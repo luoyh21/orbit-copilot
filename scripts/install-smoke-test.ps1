@@ -76,15 +76,22 @@ function Find-OrbitCopilotExecutable {
     foreach ($Entry in $Entries) {
       if (-not [string]::IsNullOrWhiteSpace($Entry.DisplayIcon)) {
         $IconPath = ($Entry.DisplayIcon -replace ",\d+$", "").Trim('"')
-        if ((Test-Path -LiteralPath $IconPath) -and $IconPath -match "(?i)\.exe$") {
+        if ((Test-Path -LiteralPath $IconPath) -and
+            $IconPath -match "(?i)\.exe$" -and
+            $IconPath -notmatch "(?i)probe|test|uninstall|unins") {
           return (Resolve-Path -LiteralPath $IconPath).Path
         }
       }
       if (-not [string]::IsNullOrWhiteSpace($Entry.InstallLocation) -and
           (Test-Path -LiteralPath $Entry.InstallLocation)) {
-        $Candidate = Get-ChildItem -LiteralPath $Entry.InstallLocation -Filter "*.exe" -File |
-          Where-Object { $_.Name -notmatch "(?i)uninstall|unins" } |
+        $Executables = Get-ChildItem -LiteralPath $Entry.InstallLocation -Filter "*.exe" -File |
+          Where-Object { $_.Name -notmatch "(?i)probe|test|uninstall|unins" }
+        $Candidate = $Executables |
+          Where-Object { $_.BaseName -match "(?i)Orbit Copilot|orbit-copilot|轨道智枢" } |
           Select-Object -First 1
+        if (-not $Candidate) {
+          $Candidate = $Executables | Select-Object -First 1
+        }
         if ($Candidate) {
           return $Candidate.FullName
         }
@@ -108,6 +115,9 @@ function Find-OrbitCopilotExecutable {
 $AppPath = Find-OrbitCopilotExecutable
 if ([string]::IsNullOrWhiteSpace($AppPath)) {
   throw "Installation finished, but the Orbit Copilot executable could not be located."
+}
+if ($AppPath -match "(?i)probe|test|uninstall|unins") {
+  throw "Resolved an invalid smoke-test executable instead of Orbit Copilot: $AppPath"
 }
 
 Write-Host "Launching $AppPath..."
