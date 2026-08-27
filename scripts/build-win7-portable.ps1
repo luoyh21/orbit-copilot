@@ -156,8 +156,45 @@ $env:CARGO_TARGET_X86_64_WIN7_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-s
 # Tauri override the static UCRT with the dynamic import library.
 Remove-Item Env:STATIC_VCRUNTIME -ErrorAction SilentlyContinue
 Write-Host "Building with the real x86_64-win7-windows-msvc target and a static Visual C++ runtime..."
-npm run desktop:build:win7:portable
-if ($LASTEXITCODE -ne 0) { throw "Win7 portable desktop build failed with exit code $LASTEXITCODE." }
+
+# x86_64-win7-windows-msvc is a Rust Tier 3 target. rustc supports it together
+# with build-std, but rustup does not distribute it and therefore omits it from
+# `rustup target list`. Tauri CLI 2.11 validates --target against that incomplete
+# rustup list. Keep Cargo available as an explicit runner while hiding rustup
+# from Tauri's PATH-based check so the real target reaches rustc.
+$CargoCommand = Get-Command cargo.exe -ErrorAction SilentlyContinue
+if (-not $CargoCommand) { $CargoCommand = Get-Command cargo -ErrorAction SilentlyContinue }
+$NpxCommand = Get-Command npx.cmd -ErrorAction SilentlyContinue
+if (-not $NpxCommand) { $NpxCommand = Get-Command npx -ErrorAction SilentlyContinue }
+$RustupCommand = Get-Command rustup.exe -ErrorAction SilentlyContinue
+if (-not $RustupCommand) { $RustupCommand = Get-Command rustup -ErrorAction SilentlyContinue }
+if (-not $CargoCommand -or -not $NpxCommand -or -not $RustupCommand) {
+  throw "cargo, npx, and rustup must all be available before building the Win7 target."
+}
+
+$OriginalPath = $env:PATH
+$RustupDirectory = (Split-Path -Parent $RustupCommand.Source).TrimEnd('\')
+$TauriPathShim = Join-Path $BuildCache "tauri-path-shim"
+if (Test-Path -LiteralPath $TauriPathShim) { Remove-Item -LiteralPath $TauriPathShim -Recurse -Force }
+New-Item -ItemType Directory -Path $TauriPathShim -Force | Out-Null
+$ShimCargo = Join-Path $TauriPathShim "cargo.exe"
+Copy-Item -LiteralPath $CargoCommand.Source -Destination $ShimCargo
+$FilteredPathEntries = @($TauriPathShim) + @($OriginalPath -split [IO.Path]::PathSeparator | Where-Object {
+  $_ -and $_.TrimEnd('\') -ine $RustupDirectory
+})
+$FilteredPath = $FilteredPathEntries -join [IO.Path]::PathSeparator
+try {
+  $env:PATH = $FilteredPath
+  & $NpxCommand.Source tauri build `
+    --runner $ShimCargo `
+    --no-bundle `
+    --target x86_64-win7-windows-msvc `
+    --config src-tauri/tauri.win7.portable.conf.json `
+    -- -Z build-std=std,panic_abort
+  if ($LASTEXITCODE -ne 0) { throw "Win7 portable desktop build failed with exit code $LASTEXITCODE." }
+} finally {
+  $env:PATH = $OriginalPath
+}
 
 $TargetReleaseDirectory = Join-Path $env:CARGO_TARGET_DIR "x86_64-win7-windows-msvc\release"
 $BuiltExecutable = Join-Path $TargetReleaseDirectory "orbit-copilot.exe"
