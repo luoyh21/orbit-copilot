@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Compatibility wrapper for Ubuntu's LLVM 10 resource compiler.
+
+MS rc.exe accepts adjacent quoted strings in an inline manifest resource while
+LLVM 10 expects one quoted value. Tauri emits the former, so join that one block
+before invoking the real compiler. Newer LLVM versions do not need this wrapper.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def rewrite(path: Path) -> Path:
+    text = path.read_text(encoding="utf-8")
+    pattern = re.compile(r'(\n1\s+24\s*\n\{\s*\n)((?:\s*".*"\s*\n)+)(\})')
+
+    def join(match: re.Match[str]) -> str:
+        values = []
+        for line in match.group(2).splitlines():
+            value = line.strip()
+            if value.startswith('"') and value.endswith('"'):
+                values.append(value[1:-1])
+        return f'{match.group(1)}"{"".join(values)}"\n{match.group(3)}'
+
+    rewritten = pattern.sub(join, text)
+    handle, name = tempfile.mkstemp(suffix=".rc", prefix="orbit-llvm-rc-")
+    os.close(handle)
+    output = Path(name)
+    output.write_text(rewritten, encoding="utf-8")
+    return output
+
+
+def main() -> int:
+    real = os.environ.get("ORBIT_REAL_LLVM_RC", "/mnt/data/orbit-tools/llvm-root/usr/lib/llvm-10/bin/llvm-rc")
+    arguments = list(sys.argv[1:])
+    temporary = None
+    try:
+        for index, value in enumerate(arguments):
+            candidate = Path(value)
+            if candidate.is_file() and candidate.suffix.lower() == ".rc":
+                temporary = rewrite(candidate)
+                arguments[index] = str(temporary)
+                break
+        return subprocess.call([real, *arguments])
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

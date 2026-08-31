@@ -10,6 +10,8 @@ use tauri::{Emitter, Manager};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
+mod offline;
+
 const CREDENTIAL_SERVICE: &str = "com.starmad.orbitcopilot";
 
 // The current static WebView2 loader uses EventSetInformation only to attach
@@ -277,6 +279,16 @@ async fn native_request(request: NativeRequest) -> Result<NativeResponse, String
 }
 
 #[tauri::command]
+fn offline_data_status() -> Result<offline::OfflineDataStatus, String> {
+    offline::status()
+}
+
+#[tauri::command]
+fn offline_news(date: String) -> Result<offline::OfflineNewsResponse, String> {
+    offline::news(&date)
+}
+
+#[tauri::command]
 fn save_secret(key: String, value: String) -> Result<(), String> {
     let entry = keyring::Entry::new(CREDENTIAL_SERVICE, &key)
         .map_err(|error| format!("无法打开系统凭据库: {error}"))?;
@@ -412,6 +424,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             native_request,
+            offline_data_status,
+            offline_news,
             save_secret,
             load_secret,
             save_xlsx,
